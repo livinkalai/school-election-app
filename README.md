@@ -13,6 +13,8 @@ A simple web-based (no-internet required) voting system for schools to conduct e
 
 ## Configuration
 
+On a new machine or clone, copy `settings/config.example.json` to `settings/config.json` and edit values (school name, admin password, etc.). The repository does not include `config.json` so local credentials are not published.
+
 The application uses the following configuration files in the `settings` folder:
 
 ### 1. config.json
