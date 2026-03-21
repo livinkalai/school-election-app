@@ -1,0 +1,15 @@
+{
+    "school_name": "Your School Name",
+    "logo_url": "/static/images/school_logo.jpg",
+    "background_url": "/static/images/school_bg.jpg",
+    "admin_username": "admin",
+    "admin_password": "CHANGE_ME",
+    "theme_name": "primary",
+    "available_themes": [
+        "primary",
+        "secondary",
+        "light",
+        "warning",
+        "info"
+    ]
+}

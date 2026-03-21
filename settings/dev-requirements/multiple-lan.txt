@@ -1,0 +1,16 @@
+multiple system support
+
+1. we run this app in multiple laptop/computer
+2. we wanted to connect all together to collect the votes
+3. for example , laptop1 and laptop2 are Primary, all others are secondaries
+3.1. we need to have single settings where we can mention it as "Primary", 
+if not mentioned then it is consider as secondary -by default should be secondary
+4. each laptop will save their own votes in itself and should also save theris results to Primary laptops.
+5. as a co-ordinator i will run the Primary-laptops, I can either run votes as usual 
+or even it doesnot require to run the voting, just will open the app.
+6. at the end , i dont need to go to each laptops to collect all the results
+7. I will look at my Primary-laptops for the consolidated final results
+8. for backup individual results can be saved in each laptops
+10. it should not rely on internet, should work without internet /offline
+11. it can either connected via LAN or single-wifi
+12. incase laptop shutdown

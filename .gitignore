@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Local / generated
+build/
+dist/
+.cursor/
+
+# Secrets and runtime data (use config.example.json as a template)
+settings/config.json
+votes.xlsx

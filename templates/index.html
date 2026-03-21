@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-start align-items-center mb-4">
+    <div class="col-auto">
+        {% if logo_url %}
+        <img src="{{ logo_url }}" alt="{{ school_name }}" class="school-logo-lg">
+        {% endif %}
+    </div>
+    <div class="col text-center">
+        <h1 class="display-4">Welcome to {{ school_name }} Voting System</h1>
+    </div>
+</div>
+
+<div class="text-center mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-4">
+            <a href="/admin-login" class="btn btn-primary btn-lg w-100 mb-3">Admin</a>
+        </div>
+        <div class="col-md-4">
+            <a href="/student-voting" class="btn btn-success btn-lg w-100 mb-3">Student</a>
+        </div>
+    </div>
+</div>
+{% endblock %} 

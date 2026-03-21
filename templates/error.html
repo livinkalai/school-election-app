@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card bg-transparent border-0">
+                <div class="card-header bg-transparent border-0">
+                    <h4 class="mb-0 text-white text-shadow fw-bold">Error</h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-danger">
+                        {{ error_message }}
+                    </div>
+                    <p class="mb-0 text-white text-shadow">Please try the following:</p>
+                    <ul class="text-white text-shadow">
+                        <li>Close the votes.xlsx file if it's open in Excel</li>
+                        <li>Make sure you have write permissions to the application folder</li>
+                        <li>Try again after a few seconds</li>
+                    </ul>
+                    <div class="text-center mt-4">
+                        <a href="/" class="btn btn-light">Return to Home</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

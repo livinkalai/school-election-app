@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card bg-transparent border-0">
+            <div class="card-header bg-transparent border-0">
+                <h3 class="text-center text-white text-shadow fw-bold">Admin Login</h3>
+            </div>
+            <div class="card-body">
+                {% if request.query_params.get('error') %}
+                <div class="alert alert-danger">
+                    Invalid password. Please try again.
+                </div>
+                {% endif %}
+                <form method="POST" action="/admin-login">
+                    <div class="mb-3">
+                        <label for="password" class="form-label text-white text-shadow">Password</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-light">Login</button>
+                        <a href="/" class="btn btn-light">Back to Home</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

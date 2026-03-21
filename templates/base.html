@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ school_name }} - Voting System</title>
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .candidate-card {
+            transition: transform 0.2s;
+        }
+        .candidate-card:hover {
+            transform: scale(1.05);
+        }
+        .candidate-image {
+            width: 200px;
+            height: 200px;
+            object-fit: cover;
+        }
+        .nav-btn {
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border: 1px solid white;
+            border-radius: 4px;
+            margin-left: 1rem;
+        }
+        .nav-btn:hover {
+            background-color: white;
+            color: #0d6efd;
+        }
+        .school-logo {
+            max-height: 50px;
+            margin-right: 10px;
+            border: 2px solid white;
+            padding: 2px;
+            border-radius: 5px;
+        }
+        .school-logo-lg {
+            max-height: 100px;
+            border: 2px solid white;
+            padding: 5px;
+            border-radius: 5px;
+        }
+        .text-shadow {
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+        }
+        .display-4 {
+            font-weight: bold;
+            color: #fff !important;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7) !important;
+        }
+        .full-background {
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }
+        .container {
+            background-color: transparent;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .square-card {
+            position: relative;
+            width: 100%;
+            padding-bottom: 100%;
+            height: 0;
+        }
+        .square-card .card-body {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+    </style>
+    {% if theme_name in ['secondary', 'light', 'warning', 'info'] %}
+    <style>
+        .navbar, .navbar .navbar-brand, .navbar .nav-btn {
+            color: #212529 !important;
+        }
+        .navbar .nav-btn {
+            background-color: #e2e3e5 !important;
+            border-color: #212529 !important;
+        }
+        .navbar .nav-btn:hover {
+            background-color: #212529 !important;
+            color: #fff !important;
+        }
+    </style>
+    {% else %}
+    <style>
+        .navbar .navbar-brand {
+            color: #fff !important;
+        }
+    </style>
+    {% endif %}
+    {% if background_url %}
+    <style>
+        body {
+            background-image: url('{{ background_url }}');
+        }
+    </style>
+    {% endif %}
+</head>
+<body class="full-background">
+    <nav class="navbar navbar-expand-lg navbar-dark" style="background: transparent;">
+        <div class="container">
+            {# <a class="navbar-brand text-white text-shadow" href="/">{{ school_name }} - Voting System</a> #}
+            {% if is_admin %}
+            <div class="d-flex">
+                <a href="/results" class="btn btn-light me-2">View Results</a>
+                <a href="/shutdown" class="btn btn-light" onclick="return confirm('Are you sure you want to close the application?')">Close Application</a>
+            </div>
+            {% elif is_student %}
+            <div class="d-flex ms-auto">
+                <a href="/end-voting" class="btn btn-light" onclick="return confirm('Are you sure you want to end voting?')">End Voting</a>
+            </div>
+            {% endif %}
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script src="/static/js/bootstrap.bundle.min.js"></script>
+</body>
+</html> 
