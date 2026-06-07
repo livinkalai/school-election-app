@@ -1,14 +1,18 @@
 import os
 import sys
+import shutil
 import json
 import uuid
 import webbrowser
 import threading
 import time
 import socket
+import ipaddress
 import secrets  # For generating secure random key
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
+from urllib.parse import urlparse
 from fastapi import FastAPI, Request, Form, HTTPException, Response, Header
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,11 +25,9 @@ import filelock # Needed for process locking
 import tempfile # Needed for robust temporary file path
 import hashlib # Needed for unique lock file name
 from PIL import Image, ImageDraw
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
 from pydantic import BaseModel
+
+# matplotlib / reportlab are imported inside export helpers only (avoids numpy init issues in PyInstaller onefile).
 
 # Determine base paths for bundled vs. external files
 if getattr(sys, 'frozen', False):
@@ -79,10 +81,10 @@ def load_config():
                 "info"
             ],
             "node_role": "secondary",
-            "primary_base_urls": [],
-            "secondary_base_urls": [],
             "sync_secret": "",
             "machine_id": "",
+            "lan_discovery": True,
+            "lan_scan_cidrs": [],
         }
         with open(CONFIG_FILE, 'w') as f:
             json.dump(default_config, f, indent=4)
@@ -91,13 +93,13 @@ def load_config():
         raise Exception("Invalid config.json file. Please check the file format.")
 
 def apply_sync_defaults(cfg: dict) -> None:
-    """Ensure LAN sync keys exist (defaults: secondary, no URLs, empty secret)."""
+    """Ensure LAN sync keys exist (defaults: secondary, discovery on, empty secret)."""
     defaults = {
         "node_role": "secondary",
-        "primary_base_urls": [],
-        "secondary_base_urls": [],
         "sync_secret": "",
         "machine_id": "",
+        "lan_discovery": True,
+        "lan_scan_cidrs": [],
     }
     for k, v in defaults.items():
         if k not in cfg:
@@ -130,6 +132,26 @@ SECRET_KEY = generate_secret_key()
 # Initialize serializer for session handling
 serializer = URLSafeSerializer(SECRET_KEY)
 
+def session_is_admin(data: Optional[dict]) -> bool:
+    if not isinstance(data, dict):
+        return False
+    return data.get("is_admin") is True
+
+def parse_session_data(cookie_val: Optional[str]) -> Optional[dict]:
+    if not cookie_val:
+        return None
+    try:
+        return serializer.loads(cookie_val)
+    except Exception:
+        return None
+
+def session_template_vars(request: Request) -> dict:
+    """Navbar: is_admin from cookie (password login). Machine roles are only primary | secondary."""
+    data = parse_session_data(request.cookies.get("session"))
+    if not data:
+        return {"is_admin": False}
+    return {"is_admin": data.get("is_admin") is True}
+
 # Get theme settings from config
 THEME_NAME = config.get("theme_name", "primary")
 
@@ -152,6 +174,30 @@ if not os.path.exists(STATIC_IMAGES_PATH):
     os.makedirs(STATIC_IMAGES_PATH)
 if not os.path.exists(STATIC_CANDIDATES_PATH):
     os.makedirs(STATIC_CANDIDATES_PATH)
+
+def _copy_tree_overwrite(src_root: str, dst_root: str) -> None:
+    """Copy all files under src_root into dst_root (overwrite)."""
+    if not os.path.isdir(src_root):
+        return
+    os.makedirs(dst_root, exist_ok=True)
+    for root, _dirs, files in os.walk(src_root):
+        rel = os.path.relpath(root, src_root)
+        target_dir = dst_root if rel == "." else os.path.join(dst_root, rel)
+        os.makedirs(target_dir, exist_ok=True)
+        for name in files:
+            shutil.copy2(os.path.join(root, name), os.path.join(target_dir, name))
+
+def sync_static_css_js_from_bundle() -> None:
+    """Frozen exe: templates read from bundle, but /static is served from beside the exe — copy css/js from bundle every launch."""
+    if not getattr(sys, "frozen", False):
+        return
+    bundled = os.path.join(APPLICATION_PATH, "static")
+    if not os.path.isdir(bundled):
+        return
+    for sub in ("css", "js"):
+        _copy_tree_overwrite(os.path.join(bundled, sub), os.path.join(STATIC_DIR_PATH, sub))
+
+sync_static_css_js_from_bundle()
 
 def ensure_background_image():
     """Ensure the background image exists, create a default one if it doesn't."""
@@ -199,15 +245,354 @@ LOGO_URL = config.get("logo_url", "")
 BACKGROUND_URL = config.get("background_url", "")
 
 MACHINE_ID = (config.get("machine_id") or "").strip() or socket.gethostname()
-NODE_ROLE = (config.get("node_role") or "secondary").strip().lower()
-PRIMARY_BASE_URLS: List[str] = [u.strip().rstrip("/") for u in (config.get("primary_base_urls") or []) if str(u).strip()]
-SECONDARY_BASE_URLS: List[str] = [u.strip().rstrip("/") for u in (config.get("secondary_base_urls") or []) if str(u).strip()]
+_raw_node_role = (config.get("node_role") or "secondary").strip().lower()
+NODE_ROLE = "primary" if _raw_node_role == "primary" else "secondary"
 SYNC_SECRET = (config.get("sync_secret") or "").strip()
+LAN_DISCOVERY = bool(config.get("lan_discovery", True))
+LAN_SCAN_CIDRS: List[str] = [str(c).strip() for c in (config.get("lan_scan_cidrs") or []) if str(c).strip()]
+LAN_PEER_TIMEOUT = float(config.get("lan_peer_timeout", 0.35))
+LAN_SCAN_WORKERS = int(config.get("lan_scan_workers", 64))
+MAX_LAN_SCAN_HOSTS = int(config.get("max_lan_scan_hosts", 512))
 
 VOTES_HEADER_NEW = ["VoteId", "Timestamp", "Post", "CandidateName", "SourceMachine"]
 PENDING_SYNC_FILE = os.path.join(EXTERNAL_FILES_PATH, "pending_sync.jsonl")
+PEER_STATE_FILE = os.path.join(EXTERNAL_FILES_PATH, "peer_lan_state.json")
+PEER_STATE_LOCK_FILE = os.path.join(EXTERNAL_FILES_PATH, "peer_lan_state.json.lock")
 _last_sync_status: Dict[str, Any] = {"last_push_error": None, "last_collect": None}
 _sync_stop = threading.Event()
+_lan_primary_cache: Dict[str, Any] = {"urls": [], "ts": 0.0}
+_LAN_PRIMARY_CACHE_TTL_SEC = 90.0
+
+def get_local_ipv4_addresses() -> List[str]:
+    """IPv4 addresses for this machine (excludes loopback)."""
+    out: set = set()
+    try:
+        hostname = socket.gethostname()
+        for res in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            ip = res[4][0]
+            if not str(ip).startswith("127."):
+                out.add(ip)
+    except Exception:
+        pass
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        out.add(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
+    return list(out)
+
+def get_scan_networks() -> List[ipaddress.IPv4Network]:
+    """Networks to scan for peers. Uses lan_scan_cidrs if set; else /24 around each local IPv4."""
+    if LAN_SCAN_CIDRS:
+        nets: List[ipaddress.IPv4Network] = []
+        for c in LAN_SCAN_CIDRS:
+            try:
+                nets.append(ipaddress.ip_network(c, strict=False))
+            except Exception:
+                continue
+        return nets
+    nets = []
+    for ip in get_local_ipv4_addresses():
+        try:
+            nets.append(ipaddress.ip_interface(f"{ip}/24").network)
+        except Exception:
+            continue
+    seen: set = set()
+    out: List[ipaddress.IPv4Network] = []
+    for n in nets:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+def _probe_peer_base(base: str, want_role: str) -> Optional[str]:
+    """Return base URL if peer responds with matching role and sync secret."""
+    base = base.rstrip("/")
+    try:
+        r = requests.get(
+            f"{base}/api/sync/peer",
+            headers=_sync_headers(),
+            timeout=LAN_PEER_TIMEOUT,
+        )
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if data.get("app") != "school-election-app":
+            return None
+        role = str(data.get("node_role") or "").strip().lower()
+        if role == want_role.strip().lower():
+            return base
+    except Exception:
+        return None
+    return None
+
+def discover_bases_for_role(want_role: str) -> List[str]:
+    """Scan LAN for other app instances with the given node_role (primary or secondary)."""
+    wr = want_role.strip().lower()
+    if wr not in ("primary", "secondary") or not SYNC_SECRET:
+        return []
+    networks = get_scan_networks()
+    if not networks:
+        return []
+    self_ips = set(get_local_ipv4_addresses())
+    candidates: List[str] = []
+    for net in networks:
+        try:
+            n_hosts = int(net.num_addresses) - 2
+        except Exception:
+            n_hosts = 0
+        if n_hosts > MAX_LAN_SCAN_HOSTS:
+            print(
+                f"LAN discovery: skipping {net} (>{MAX_LAN_SCAN_HOSTS} addresses). "
+                "Set a smaller lan_scan_cidrs (e.g. 192.168.1.0/24)."
+            )
+            continue
+        for host in net.hosts():
+            if len(candidates) >= MAX_LAN_SCAN_HOSTS:
+                break
+            ip_str = str(host)
+            if ip_str in self_ips:
+                continue
+            candidates.append(f"http://{ip_str}:{APP_PORT}")
+        if len(candidates) >= MAX_LAN_SCAN_HOSTS:
+            break
+    found: List[str] = []
+    if not candidates:
+        return []
+    with ThreadPoolExecutor(max_workers=max(4, min(LAN_SCAN_WORKERS, len(candidates)))) as ex:
+        futures = {ex.submit(_probe_peer_base, b, wr): b for b in candidates}
+        for fut in as_completed(futures):
+            try:
+                ok = fut.result()
+                if ok:
+                    found.append(ok)
+            except Exception:
+                continue
+    return sorted(set(found))
+
+def get_effective_primary_urls() -> List[str]:
+    """LAN discovery only (no manual Primary URLs in config)."""
+    if not LAN_DISCOVERY or not SYNC_SECRET:
+        return []
+    now = time.time()
+    if (
+        _lan_primary_cache["urls"]
+        and (now - float(_lan_primary_cache["ts"])) < _LAN_PRIMARY_CACHE_TTL_SEC
+    ):
+        return list(_lan_primary_cache["urls"])
+    urls = discover_bases_for_role("primary")
+    _lan_primary_cache["urls"] = urls
+    _lan_primary_cache["ts"] = now
+    return list(urls)
+
+def get_effective_secondary_urls() -> List[str]:
+    """Known secondaries (peer state + LAN scan)."""
+    if not LAN_DISCOVERY or not SYNC_SECRET:
+        return []
+    return get_monitored_secondary_bases(scan_lan=True)
+
+def _default_peer_state() -> dict:
+    return {"secondaries": {}, "primaries": {}}
+
+def load_peer_state() -> dict:
+    lock = filelock.FileLock(PEER_STATE_LOCK_FILE)
+    try:
+        with lock.acquire(timeout=8):
+            if not os.path.exists(PEER_STATE_FILE):
+                return _default_peer_state()
+            with open(PEER_STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return _default_peer_state()
+            data.setdefault("secondaries", {})
+            data.setdefault("primaries", {})
+            if not isinstance(data["secondaries"], dict):
+                data["secondaries"] = {}
+            if not isinstance(data["primaries"], dict):
+                data["primaries"] = {}
+            return data
+    except Exception:
+        return _default_peer_state()
+
+def save_peer_state(data: dict) -> None:
+    lock = filelock.FileLock(PEER_STATE_LOCK_FILE)
+    with lock.acquire(timeout=12):
+        tmp = PEER_STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, PEER_STATE_FILE)
+
+def merge_peer_section(section: str, base: str, updates: dict) -> None:
+    base = base.rstrip("/")
+    state = load_peer_state()
+    m = state.setdefault(section, {})
+    cur = dict(m.get(base, {}))
+    cur.update(updates)
+    m[base] = cur
+    state[section] = m
+    save_peer_state(state)
+
+def extract_host_from_base(base: str) -> str:
+    try:
+        u = urlparse(base)
+        return u.hostname or base
+    except Exception:
+        return base
+
+def probe_peer_live(base: str) -> dict:
+    try:
+        r = requests.get(
+            f"{base.rstrip('/')}/api/sync/peer",
+            headers=_sync_headers(),
+            timeout=0.8,
+        )
+        if r.status_code != 200:
+            return {"ok": False, "error": f"HTTP {r.status_code}"}
+        data = r.json()
+        return {
+            "ok": True,
+            "machine_id": data.get("machine_id") or "",
+            "node_role": str(data.get("node_role") or "").strip().lower(),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def format_collect_summary(merged: dict) -> str:
+    if not merged.get("last_collect_at"):
+        return "Not collected yet"
+    if merged.get("last_collect_error"):
+        err = str(merged["last_collect_error"])
+        return f"Failed: {err[:120]}{'…' if len(err) > 120 else ''}"
+    n = merged.get("last_collect_merged")
+    if n is None:
+        return "—"
+    return f"OK — {n} new vote(s) merged"
+
+def format_push_summary(merged: dict) -> str:
+    if not merged.get("last_push_at"):
+        return "No push yet"
+    if merged.get("last_push_ok") is True:
+        return "OK"
+    if merged.get("last_push_error"):
+        err = str(merged["last_push_error"])
+        return f"Failed: {err[:120]}{'…' if len(err) > 120 else ''}"
+    return "Unknown"
+
+def get_monitored_secondary_bases(scan_lan: bool) -> List[str]:
+    bases = set()
+    st = load_peer_state().get("secondaries", {})
+    for k in st.keys():
+        bases.add(k.rstrip("/"))
+    if scan_lan and LAN_DISCOVERY and SYNC_SECRET:
+        for b in discover_bases_for_role("secondary"):
+            bases.add(b.rstrip("/"))
+    return sorted(bases)
+
+def get_monitored_primary_bases(scan_lan: bool) -> List[str]:
+    bases = set()
+    st = load_peer_state().get("primaries", {})
+    for k in st.keys():
+        bases.add(k.rstrip("/"))
+    if scan_lan and LAN_DISCOVERY and SYNC_SECRET:
+        for b in discover_bases_for_role("primary"):
+            bases.add(b.rstrip("/"))
+    return sorted(bases)
+
+def build_secondary_monitor_rows(bases: List[str]) -> List[dict]:
+    if not bases:
+        return []
+    state = load_peer_state()
+    secondaries = dict(state.setdefault("secondaries", {}))
+    prior = {k: dict(v) for k, v in secondaries.items()}
+    rows_out: List[dict] = []
+
+    def work(base: str) -> Tuple[str, dict, dict]:
+        base = base.rstrip("/")
+        live = probe_peer_live(base)
+        pr = dict(prior.get(base, {}))
+        upd = {
+            "last_probe_at": datetime.now().isoformat(),
+            "last_probe_ok": live["ok"],
+            "last_probe_error": None if live["ok"] else live.get("error", ""),
+        }
+        if live.get("machine_id"):
+            upd["machine_id"] = live["machine_id"]
+        if live.get("node_role"):
+            upd["node_role"] = live["node_role"]
+        merged = {**pr, **upd}
+        display = {
+            "ip": extract_host_from_base(base),
+            "base": base,
+            "machine_id": merged.get("machine_id") or "—",
+            "app_online": live["ok"],
+            "node_role": merged.get("node_role") or "—",
+            "last_probe_at": merged.get("last_probe_at"),
+            "last_collect_at": merged.get("last_collect_at"),
+            "last_collect_merged": merged.get("last_collect_merged"),
+            "last_collect_error": merged.get("last_collect_error"),
+            "collect_summary": format_collect_summary(merged),
+        }
+        return base, merged, display
+
+    with ThreadPoolExecutor(max_workers=max(4, min(32, len(bases)))) as ex:
+        futs = [ex.submit(work, b) for b in bases]
+        for fut in as_completed(futs):
+            base, merged, display = fut.result()
+            secondaries[base] = merged
+            rows_out.append(display)
+    state["secondaries"] = secondaries
+    save_peer_state(state)
+    rows_out.sort(key=lambda r: r["ip"])
+    return rows_out
+
+def build_primary_monitor_rows(bases: List[str]) -> List[dict]:
+    if not bases:
+        return []
+    state = load_peer_state()
+    primaries = dict(state.setdefault("primaries", {}))
+    prior = {k: dict(v) for k, v in primaries.items()}
+    rows_out: List[dict] = []
+
+    def work(base: str) -> Tuple[str, dict, dict]:
+        base = base.rstrip("/")
+        live = probe_peer_live(base)
+        pr = dict(prior.get(base, {}))
+        upd = {
+            "last_probe_at": datetime.now().isoformat(),
+            "last_probe_ok": live["ok"],
+            "last_probe_error": None if live["ok"] else live.get("error", ""),
+        }
+        if live.get("machine_id"):
+            upd["machine_id"] = live["machine_id"]
+        if live.get("node_role"):
+            upd["node_role"] = live["node_role"]
+        merged = {**pr, **upd}
+        display = {
+            "ip": extract_host_from_base(base),
+            "base": base,
+            "machine_id": merged.get("machine_id") or "—",
+            "app_online": live["ok"],
+            "node_role": merged.get("node_role") or "—",
+            "last_probe_at": merged.get("last_probe_at"),
+            "last_push_at": merged.get("last_push_at"),
+            "last_push_ok": merged.get("last_push_ok"),
+            "last_push_error": merged.get("last_push_error"),
+            "push_summary": format_push_summary(merged),
+        }
+        return base, merged, display
+
+    with ThreadPoolExecutor(max_workers=max(4, min(32, len(bases)))) as ex:
+        futs = [ex.submit(work, b) for b in bases]
+        for fut in as_completed(futs):
+            base, merged, display = fut.result()
+            primaries[base] = merged
+            rows_out.append(display)
+    state["primaries"] = primaries
+    save_peer_state(state)
+    rows_out.sort(key=lambda r: r["ip"])
+    return rows_out
 
 def _normalize_base_url(url: str) -> str:
     u = (url or "").strip().rstrip("/")
@@ -494,7 +879,8 @@ def append_pending_sync(payload: dict) -> None:
         f.write(line)
 
 def push_vote_to_primaries(vote_id: str, ts: datetime, post: str, candidate: str, source_machine: str) -> None:
-    if NODE_ROLE != "secondary" or not SYNC_SECRET or not PRIMARY_BASE_URLS:
+    targets = get_effective_primary_urls()
+    if NODE_ROLE != "secondary" or not SYNC_SECRET or not targets:
         return
     body = {
         "vote_id": vote_id,
@@ -506,26 +892,43 @@ def push_vote_to_primaries(vote_id: str, ts: datetime, post: str, candidate: str
     headers = _sync_headers()
     errs = []
     ok_count = 0
-    for base in PRIMARY_BASE_URLS:
+    now_iso = datetime.now().isoformat()
+    for base in targets:
         url = f"{base}/api/votes/ingest"
         try:
             r = requests.post(url, json=body, headers=headers, timeout=8)
             if r.status_code in (200, 201):
                 ok_count += 1
+                merge_peer_section("primaries", base, {
+                    "last_push_at": now_iso,
+                    "last_push_ok": True,
+                    "last_push_error": None,
+                })
             else:
+                merge_peer_section("primaries", base, {
+                    "last_push_at": now_iso,
+                    "last_push_ok": False,
+                    "last_push_error": f"HTTP {r.status_code}",
+                })
                 errs.append(f"{base}: HTTP {r.status_code}")
         except Exception as e:
+            merge_peer_section("primaries", base, {
+                "last_push_at": now_iso,
+                "last_push_ok": False,
+                "last_push_error": str(e),
+            })
             errs.append(f"{base}: {e}")
     if ok_count == 0:
         _last_sync_status["last_push_error"] = "; ".join(errs) if errs else "no primaries reachable"
         append_pending_sync(body)
     else:
         _last_sync_status["last_push_error"] = (
-            None if ok_count == len(PRIMARY_BASE_URLS) else "Partial: " + "; ".join(errs)
+            None if ok_count == len(targets) else "Partial: " + "; ".join(errs)
         )
 
 def process_pending_sync_queue_once() -> None:
-    if NODE_ROLE != "secondary" or not SYNC_SECRET or not PRIMARY_BASE_URLS:
+    targets = get_effective_primary_urls()
+    if NODE_ROLE != "secondary" or not SYNC_SECRET or not targets:
         return
     if not os.path.exists(PENDING_SYNC_FILE):
         return
@@ -548,12 +951,18 @@ def process_pending_sync_queue_once() -> None:
             remaining.append(line + "\n")
             continue
         ok_any = False
-        for base in PRIMARY_BASE_URLS:
+        now_iso = datetime.now().isoformat()
+        for base in targets:
             url = f"{base}/api/votes/ingest"
             try:
                 r = requests.post(url, json=body, headers=headers, timeout=8)
                 if r.status_code in (200, 201):
                     ok_any = True
+                    merge_peer_section("primaries", base, {
+                        "last_push_at": now_iso,
+                        "last_push_ok": True,
+                        "last_push_error": None,
+                    })
                     break
             except Exception:
                 pass
@@ -641,8 +1050,34 @@ def verify_sync_secret_header(x_sync_secret: Optional[str]) -> bool:
         return False
     return (x_sync_secret or "").strip() == SYNC_SECRET
 
+@app.get("/api/sync/peer")
+async def api_sync_peer(x_sync_secret: Optional[str] = Header(None)):
+    """LAN discovery: identifies this node when X-Sync-Secret matches."""
+    if not SYNC_SECRET:
+        raise HTTPException(status_code=503, detail="sync_secret not configured on this node")
+    if not verify_sync_secret_header(x_sync_secret):
+        raise HTTPException(status_code=403, detail="invalid sync secret")
+    return {
+        "app": "school-election-app",
+        "machine_id": MACHINE_ID,
+        "node_role": NODE_ROLE,
+    }
+
+def record_secondary_from_request(request: Request, source_machine: str = "") -> None:
+    """Remember Secondary base URL when it pushes a vote (for Collect Now without full LAN scan)."""
+    if not request.client or not request.client.host:
+        return
+    host = request.client.host.strip()
+    if not host or host in ("127.0.0.1", "::1"):
+        return
+    base = f"http://{host}:{APP_PORT}".rstrip("/")
+    updates: Dict[str, Any] = {"last_seen_push_at": datetime.now().isoformat()}
+    if source_machine:
+        updates["machine_id"] = source_machine
+    merge_peer_section("secondaries", base, updates)
+
 @app.post("/api/votes/ingest")
-async def api_votes_ingest(body: VoteIngestBody, x_sync_secret: Optional[str] = Header(None)):
+async def api_votes_ingest(body: VoteIngestBody, request: Request, x_sync_secret: Optional[str] = Header(None)):
     if not SYNC_SECRET:
         raise HTTPException(status_code=503, detail="sync_secret not configured on this node")
     if NODE_ROLE != "primary":
@@ -662,6 +1097,7 @@ async def api_votes_ingest(body: VoteIngestBody, x_sync_secret: Optional[str] = 
         ins, _skipped = merge_remote_votes([payload])
     except RuntimeError:
         raise HTTPException(status_code=503, detail="votes file busy")
+    record_secondary_from_request(request, str(body.source_machine or ""))
     if ins == 0:
         return {"ok": True, "duplicate": True}
     return {"ok": True, "duplicate": False}
@@ -713,7 +1149,7 @@ async def admin_collect_now(request: Request):
         return RedirectResponse(url="/", status_code=303)
     try:
         data = serializer.loads(session)
-        if not data.get("is_admin", False):
+        if not session_is_admin(data):
             return RedirectResponse(url="/", status_code=303)
     except Exception:
         return RedirectResponse(url="/", status_code=303)
@@ -721,17 +1157,23 @@ async def admin_collect_now(request: Request):
         return RedirectResponse(url="/results?msg=not_primary", status_code=303)
     if not SYNC_SECRET:
         return RedirectResponse(url="/results?msg=no_secret", status_code=303)
-    if not SECONDARY_BASE_URLS:
+    secondaries = get_effective_secondary_urls()
+    if not secondaries:
         return RedirectResponse(url="/results?msg=no_secondaries", status_code=303)
     summary: List[str] = []
     total_in = 0
     total_skip = 0
     headers = _sync_headers()
-    for base in SECONDARY_BASE_URLS:
+    for base in secondaries:
         url = f"{base}/api/votes/export"
+        now_iso = datetime.now().isoformat()
         try:
             r = requests.get(url, headers=headers, timeout=15)
             if r.status_code != 200:
+                merge_peer_section("secondaries", base, {
+                    "last_collect_at": now_iso,
+                    "last_collect_error": f"HTTP {r.status_code}",
+                })
                 summary.append(f"{base}: HTTP {r.status_code}")
                 continue
             payload = r.json()
@@ -739,12 +1181,26 @@ async def admin_collect_now(request: Request):
             try:
                 ins, sk = merge_remote_votes(votes)
             except RuntimeError:
+                merge_peer_section("secondaries", base, {
+                    "last_collect_at": now_iso,
+                    "last_collect_error": "votes file busy",
+                })
                 summary.append(f"{base}: votes file busy")
                 continue
             total_in += ins
             total_skip += sk
+            merge_peer_section("secondaries", base, {
+                "last_collect_at": now_iso,
+                "last_collect_merged": ins,
+                "last_collect_skipped": sk,
+                "last_collect_error": None,
+            })
             summary.append(f"{base}: merged {ins} new, {sk} skipped/duplicate")
         except Exception as e:
+            merge_peer_section("secondaries", base, {
+                "last_collect_at": now_iso,
+                "last_collect_error": str(e),
+            })
             summary.append(f"{base}: {e}")
     _last_sync_status["last_collect"] = {"summary": summary, "total_in": total_in, "total_skip": total_skip}
     return RedirectResponse(url="/results?msg=collect_done", status_code=303)
@@ -762,7 +1218,8 @@ async def index(request: Request):
         "school_name": SCHOOL_NAME,
         "logo_url": LOGO_URL,
         "theme_name": THEME_NAME,
-        "background_url": BACKGROUND_URL
+        "background_url": BACKGROUND_URL,
+        **session_template_vars(request),
     })
 
 @app.get("/admin-login", response_class=HTMLResponse)
@@ -773,7 +1230,8 @@ async def admin_login_page(request: Request):
         "school_name": SCHOOL_NAME,
         "logo_url": LOGO_URL,
         "theme_name": THEME_NAME,
-        "background_url": BACKGROUND_URL
+        "background_url": BACKGROUND_URL,
+        **session_template_vars(request),
     })
 
 @app.post("/admin-login")
@@ -803,10 +1261,9 @@ async def show_posts(request: Request):
     
     try:
         data = serializer.loads(session)
-        is_admin = data.get("is_admin", False)
         is_student = data.get("is_student", False)
         
-        if is_admin:
+        if session_is_admin(data):
             return RedirectResponse(url="/results", status_code=303)
         
         if not is_student:
@@ -828,7 +1285,8 @@ async def show_posts(request: Request):
             "school_name": SCHOOL_NAME,
             "logo_url": LOGO_URL,
             "theme_name": THEME_NAME,
-            "background_url": BACKGROUND_URL
+            "background_url": BACKGROUND_URL,
+            **session_template_vars(request),
         }
     )
 
@@ -869,7 +1327,8 @@ async def vote_page(request: Request, post: str):
             "school_name": SCHOOL_NAME,
             "logo_url": LOGO_URL,
             "theme_name": THEME_NAME,
-            "background_url": BACKGROUND_URL
+            "background_url": BACKGROUND_URL,
+            **session_template_vars(request),
         }
     )
 
@@ -921,7 +1380,8 @@ async def submit_vote(request: Request, post: str, candidate: str = Form(...)):
                 "school_name": SCHOOL_NAME,
                 "logo_url": LOGO_URL,
                 "theme_name": THEME_NAME,
-                "background_url": BACKGROUND_URL
+                "background_url": BACKGROUND_URL,
+                **session_template_vars(request),
             }
         )
 
@@ -962,7 +1422,7 @@ async def results(request: Request):
     
     try:
         data = serializer.loads(session)
-        if not data.get("is_admin", False):
+        if not session_is_admin(data):
             return RedirectResponse(url="/", status_code=303)
             
         # Clean up any empty rows before showing results
@@ -983,9 +1443,52 @@ async def results(request: Request):
             "last_push_error": _last_sync_status.get("last_push_error"),
             "last_collect": _last_sync_status.get("last_collect"),
             "results_msg": msg,
+            **session_template_vars(request),
         })
     except:
         return RedirectResponse(url="/", status_code=303)
+
+@app.get("/admin/lan-monitor", response_class=HTMLResponse)
+async def admin_lan_monitor(request: Request):
+    """Admin dashboard: LAN peers, online status, last collect/push times."""
+    session = request.cookies.get("session")
+    if not session:
+        return RedirectResponse(url="/", status_code=303)
+    try:
+        data = serializer.loads(session)
+        if not session_is_admin(data):
+            return RedirectResponse(url="/", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/", status_code=303)
+
+    scan = request.query_params.get("scan") == "1"
+    is_primary = NODE_ROLE == "primary"
+    if is_primary:
+        bases = get_monitored_secondary_bases(scan)
+        rows = build_secondary_monitor_rows(bases)
+        title = "Secondary machines (LAN)"
+    else:
+        bases = get_monitored_primary_bases(scan)
+        rows = build_primary_monitor_rows(bases)
+        title = "Primary machines (LAN)"
+
+    return templates.TemplateResponse("lan_monitor.html", {
+        "request": request,
+        "school_name": SCHOOL_NAME,
+        "logo_url": LOGO_URL,
+        "theme_name": THEME_NAME,
+        "background_url": BACKGROUND_URL,
+        "is_primary": is_primary,
+        "machine_node_role": NODE_ROLE,
+        "machine_id": MACHINE_ID,
+        "local_ip": get_local_ip(),
+        "scan_lan": scan,
+        "peer_rows": rows,
+        "peer_title": title,
+        "sync_secret_set": bool(SYNC_SECRET),
+        "lan_discovery": LAN_DISCOVERY,
+        **session_template_vars(request),
+    })
 
 @app.get("/internal-shutdown")
 async def internal_shutdown(request: Request):
@@ -1006,8 +1509,7 @@ async def shutdown(request: Request):
     
     try:
         data = serializer.loads(session)
-        is_admin = data.get("is_admin", False)
-        if not is_admin:
+        if not session_is_admin(data):
             raise HTTPException(status_code=403, detail="Admin access required")
     except:
         return RedirectResponse(url="/", status_code=303)
@@ -1040,6 +1542,11 @@ def open_browser():
     webbrowser.open(f'http://localhost:{APP_PORT}')
 
 def export_results_table_as_image(results, output_path='results_table.png'):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     table_data = []
     headers = ["Post", "Candidate", "Votes"]
     for post, cand_dict in results.items():
@@ -1077,6 +1584,12 @@ def export_results_image():
     return FileResponse(output_path, media_type="image/png", filename="school_election_results.png")
 
 def export_results_table_as_pdf(results, output_path='school_election_results.pdf'):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
     table_data = []
     headers = ["Post", "Candidate", "Votes"]
     for post, cand_dict in results.items():
@@ -1115,6 +1628,9 @@ def export_results_pdf():
     return FileResponse(output_path, media_type="application/pdf", filename="school_election_results.pdf")
 
 def export_results_table_as_reportlab(results, output_path='results_table.pdf'):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
     c = canvas.Canvas(output_path, pagesize=letter)
     width, height = letter
     y = height - 40

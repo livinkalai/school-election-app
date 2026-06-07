@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2 class="mb-3 text-white text-shadow fw-bold">LAN monitor</h2>
+        <p class="text-white text-shadow small mb-4">
+            This machine: <strong>{{ machine_id }}</strong> · role <code>{{ machine_node_role }}</code> · IP <code>{{ local_ip }}</code>
+            {% if not sync_secret_set %}<span class="badge bg-danger ms-2">sync_secret not set</span>{% endif %}
+        </p>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-12 d-flex flex-wrap gap-2 align-items-center">
+        <a href="/admin/lan-monitor" class="btn btn-outline-light">Refresh (probe known)</a>
+        <a href="/admin/lan-monitor?scan=1" class="btn btn-warning">Scan LAN &amp; refresh</a>
+        <a href="/results" class="btn btn-light">Back to results</a>
+        {% if scan_lan %}<span class="text-white text-shadow small">Last load included a full LAN scan (can take a few seconds).</span>{% endif %}
+    </div>
+</div>
+
+{% if not lan_discovery %}
+<div class="alert alert-warning">LAN discovery is off (<code>lan_discovery: false</code>). Only explicit URLs in config and peers seen before will appear unless you add URLs manually.</div>
+{% endif %}
+
+{% if is_primary %}
+<div class="card mb-4 bg-dark border-secondary">
+    <div class="card-header text-white">{{ peer_title }}</div>
+    <div class="card-body p-0">
+        {% if not peer_rows %}
+        <div class="p-3">
+            <p class="text-white-50 mb-2">No secondary machines listed yet. Use <strong>Scan LAN &amp; refresh</strong> or run <strong>Collect Now</strong> once after Secondaries are up.</p>
+            <div class="alert alert-secondary small mb-0 text-dark">
+                <strong>If the list stays empty:</strong> keep <code>lan_discovery</code> true and the same <code>sync_secret</code> on every PC. Check that Secondaries are running and Windows Firewall allows <strong>inbound TCP on port 8001</strong> on Secondary PCs. Optional: set <code>lan_scan_cidrs</code> if your subnet is not the default /24.
+            </div>
+        </div>
+        {% else %}
+        <div class="table-responsive">
+            <table class="table table-dark table-striped table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>IP</th>
+                        <th>Machine name</th>
+                        <th>App</th>
+                        <th>Role (live)</th>
+                        <th>Votes collected</th>
+                        <th>Last collect</th>
+                        <th>Last probe</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in peer_rows %}
+                    <tr>
+                        <td><code>{{ row.ip }}</code></td>
+                        <td>{{ row.machine_id }}</td>
+                        <td>{% if row.app_online %}<span class="badge bg-success">Running</span>{% else %}<span class="badge bg-secondary">Offline / blocked</span>{% endif %}</td>
+                        <td><code>{{ row.node_role }}</code></td>
+                        <td>{{ row.collect_summary }}</td>
+                        <td class="small">{% if row.last_collect_at %}{{ row.last_collect_at }}{% else %}—{% endif %}</td>
+                        <td class="small">{% if row.last_probe_at %}{{ row.last_probe_at }}{% else %}—{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+<div class="card mb-4 bg-dark border-secondary">
+    <div class="card-header text-white">{{ peer_title }}</div>
+    <div class="card-body p-0">
+        {% if not peer_rows %}
+        <p class="text-white-50 p-3 mb-0">No primary machines listed yet. Use <strong>Scan LAN &amp; refresh</strong> or cast a vote (push) after the Primary is running.</p>
+        {% else %}
+        <div class="table-responsive">
+            <table class="table table-dark table-striped table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>IP</th>
+                        <th>Machine name</th>
+                        <th>App</th>
+                        <th>Role (live)</th>
+                        <th>Last push</th>
+                        <th>Push status</th>
+                        <th>Last probe</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in peer_rows %}
+                    <tr>
+                        <td><code>{{ row.ip }}</code></td>
+                        <td>{{ row.machine_id }}</td>
+                        <td>{% if row.app_online %}<span class="badge bg-success">Running</span>{% else %}<span class="badge bg-secondary">Offline / blocked</span>{% endif %}</td>
+                        <td><code>{{ row.node_role }}</code></td>
+                        <td class="small">{% if row.last_push_at %}{{ row.last_push_at }}{% else %}—{% endif %}</td>
+                        <td>{{ row.push_summary }}</td>
+                        <td class="small">{% if row.last_probe_at %}{{ row.last_probe_at }}{% else %}—{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<div class="row mt-2">
+    <div class="col-12 text-center">
+        <a href="/" class="btn btn-light">Home</a>
+    </div>
+</div>
+{% endblock %}

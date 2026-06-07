@@ -236,26 +236,25 @@ The executable will be created in the `dist` folder.
 
 Use this when several laptops run the app on the same Wi‑Fi or LAN and you want consolidated results on one or more **Primary** machines without collecting USB drives.
 
-### `settings/config.json` keys
+### `settings/config.json` keys (LAN sync)
 
 | Key | Meaning |
 |-----|--------|
 | `node_role` | `"primary"` or `"secondary"`. Default is **`secondary`** if omitted. |
-| `primary_base_urls` | On **secondaries**: list of base URLs of Primary machines, e.g. `["http://192.168.1.10:8001"]`. After each local vote, the app POSTs to these URLs. |
-| `secondary_base_urls` | On **primaries**: list of each voting laptop’s base URL for **Collect Now**, e.g. `["http://192.168.1.21:8001"]`. |
-| `sync_secret` | Shared password for LAN APIs. **Must be the same on all machines** that sync. If empty, sync is disabled. |
+| `sync_secret` | Shared secret for LAN APIs. **Must be the same on all machines** that sync. If empty, sync is disabled. |
+| `lan_discovery` | If **`true`** (default), the app **finds other machines on the LAN** automatically — you do **not** list Secondary or Primary IPs in config. |
+| `lan_scan_cidrs` | Optional, e.g. `["192.168.1.0/24"]`. Leave **`[]`** to scan the /24 around each local IPv4 address. |
 | `machine_id` | Optional label stored with each vote (defaults to the PC hostname). |
 
 ### Behaviour
 
-- **Secondaries** save every vote locally, then push a copy to every URL in `primary_base_urls`. If the network fails, votes are queued in `pending_sync.jsonl` and retried every 30 seconds.
-- **Primaries** accept pushed votes (`POST /api/votes/ingest`) and expose `GET /api/votes/export` for **Collect Now** (admin results page → **Collect Now** button, Primary only).
-- **Collect Now** pulls from each `secondary_base_urls` entry and merges by `VoteId` (no double-counting).
-- **Firewall**: allow inbound TCP on port **8001** on Primaries (for push). For Collect Now, allow the Primary to reach each Secondary on **8001** (inbound on secondaries from the LAN).
+- **Secondaries** save every vote locally, then **discover Primaries** on the LAN (same `sync_secret`) and POST each vote to them. If the network fails, votes are queued in `pending_sync.jsonl` and retried every 30 seconds.
+- **Primaries** accept pushed votes (`POST /api/votes/ingest`) and expose `GET /api/votes/export` for **Collect Now** (admin results page → **Collect Now**). **Collect Now** discovers Secondaries on the LAN and merges by `VoteId` (no double-counting).
+- **Firewall**: allow inbound TCP on port **8001** on **every** machine that runs the app (Primaries for ingest; Secondaries for export when the Primary collects).
 
 ### Two Primary machines
 
-List both URLs in `primary_base_urls` on every Secondary. Each vote is sent to both. Use the same `sync_secret` everywhere.
+Use the same `sync_secret` everywhere. Each Secondary will discover **all** Primaries on the subnet and push to each (same as before, without manual URL lists).
 
 ### PyInstaller build
 

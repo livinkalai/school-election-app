@@ -25,8 +25,15 @@
 <div class="row mb-3"><div class="col-12"><div class="alert alert-warning">This machine is not configured as Primary (<code>node_role</code>).</div></div></div>
 {% elif results_msg == 'no_secret' %}
 <div class="row mb-3"><div class="col-12"><div class="alert alert-warning">Set <code>sync_secret</code> in config to use LAN sync.</div></div></div>
-{% elif results_msg == 'no_secondaries' %}
-<div class="row mb-3"><div class="col-12"><div class="alert alert-warning">Add <code>secondary_base_urls</code> in config for Collect Now.</div></div></div>
+{% elif results_msg == 'no_secondaries' and is_primary %}
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <span>No Secondary machines were found for Collect Now.</span>
+            <a href="/admin/lan-monitor" class="btn btn-sm btn-dark">Connected devices</a>
+        </div>
+    </div>
+</div>
 {% endif %}
 {% if not is_primary and last_push_error %}
 <div class="row mb-3">
@@ -41,6 +48,7 @@
         <form method="post" action="/admin/collect-now" class="d-inline me-2">
             <button type="submit" class="btn btn-warning" {% if not sync_secret_set %}disabled title="Configure sync_secret in settings/config.json"{% endif %}>Collect Now</button>
         </form>
+        <a href="/admin/lan-monitor" class="btn btn-info me-2">Connected devices</a>
         {% endif %}
         <a href="/export-results-image" class="btn btn-success me-2">
             Export Results as Image

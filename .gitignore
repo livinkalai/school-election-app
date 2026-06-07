@@ -1,9 +1,27 @@
 # Python
 venv/
+.venv/
+env/
+ENV/
 __pycache__/
 *.py[cod]
 *$py.class
 .Python
+pyvenv.cfg
+
+# Virtualenv / local Python libs (Windows & Unix)
+Lib/
+lib/
+Scripts/
+Include/
+bin/
+lib64/
+share/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
 
 # Local / generated
 build/
@@ -13,3 +31,5 @@ dist/
 # Secrets and runtime data (use config.example.json as a template)
 settings/config.json
 votes.xlsx
+peer_lan_state.json
+pending_sync.jsonl

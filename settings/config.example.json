@@ -1,4 +1,8 @@
 {
+    "node_role": "primary",
+    "sync_secret": "SAME_SECRET_ON_ALL_MACHINES",
+    "lan_discovery": true,
+    "lan_scan_cidrs": [],
     "school_name": "Your School Name",
     "logo_url": "/static/images/school_logo.jpg",
     "background_url": "/static/images/school_bg.jpg",
