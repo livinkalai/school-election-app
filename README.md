@@ -211,13 +211,37 @@ python main.py
 ```
 
 ### Create Windows Executable
+
+From the project folder (with venv activated):
+
 ```
-pyinstaller --noconsole --add-data "templates;templates" --add-data "static;static" main.py
- (or)
-pyinstaller school-election-app.spec
+.\venv\Scripts\python.exe -m PyInstaller --noconfirm school-election-app.spec
 ```
 
-The executable will be created in the `dist` folder.
+The executable is created as `dist\school-election-app.exe`.
+
+### Deploy to client laptops
+
+Each client needs **only the `.exe`** (and optionally a single `config.json` beside it). You do **not** copy `static\` or `settings\` — those are **inside the exe**, baked in at build time.
+
+**Before building**, set your school config in the project:
+
+- `settings/config.example.json` — school name, admin password, default `node_role`, `sync_secret`
+- `settings/candidates.json` — posts and candidate names
+
+Then build:
+
+```
+.\package-release.ps1
+```
+
+Copy `release\school-election-app.exe` to each laptop. On first vote, `votes.xlsx` is created **beside the exe** on that machine (each laptop keeps its own votes file).
+
+**Optional per-machine override:** place `config.json` in the **same folder as the exe** (not in a `settings` subfolder) to change `node_role` (`primary` / `secondary`), `sync_secret`, or admin password on that laptop only.
+
+**View Results:** Home → **Admin** → admin password → **View Results**.
+
+If results fail to load, an error page is shown (e.g. close `votes.xlsx` if open in Excel).
 
 ## File Structure
 
@@ -258,7 +282,7 @@ Use the same `sync_secret` everywhere. Each Secondary will discover **all** Prim
 
 ### PyInstaller build
 
-`school-election-app.spec` bundles only `settings/config.json` and `settings/candidates.json` (not the whole `settings` tree), so dev-only files under `settings` are not packed into the executable.
+`school-election-app.spec` bundles `templates`, `static`, `settings/config.example.json`, and `settings/candidates.json` inside the exe. Client laptops only need the exe; `votes.xlsx` is created beside the exe at runtime.
 
 ## Security Notes
 

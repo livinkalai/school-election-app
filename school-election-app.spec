@@ -9,8 +9,7 @@ a = Analysis(
     datas=[
         ('templates', 'templates'),
         ('static', 'static'),
-        ('votes.xlsx', '.'),
-        ('settings/config.json', 'settings'),
+        ('settings/config.example.json', 'settings'),
         ('settings/candidates.json', 'settings'),
     ],
     hiddenimports=[],

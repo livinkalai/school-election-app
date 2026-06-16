@@ -12,7 +12,8 @@
         .candidate-card:hover {
             transform: scale(1.05);
         }
-        .candidate-image {
+        /* Fixed photo size for posts list only; vote page uses its own responsive grid */
+        .posts-grid .candidate-image {
             width: 200px;
             height: 200px;
             object-fit: cover;

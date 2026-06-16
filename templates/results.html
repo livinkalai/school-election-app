@@ -59,7 +59,7 @@
     </div>
 </div>
 
-{% for post, candidates in results.items() %}
+{% for post, candidates in sorted_results.items() %}
 <div class="card mb-4 bg-transparent border-0">
     <div class="card-header bg-transparent border-0">
         <h3 class="text-white text-shadow fw-bold">{{ post.replace('_', ' ').title() }}</h3>
@@ -75,8 +75,8 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% set total_votes = candidates.values()|sum %}
-                    {% for candidate, votes in candidates|dictsort(false, 'value')|reverse %}
+                    {% set total_votes = results[post].values()|sum %}
+                    {% for candidate, votes in candidates %}
                     <tr>
                         <td>{{ candidate }}</td>
                         <td>{{ votes }}</td>

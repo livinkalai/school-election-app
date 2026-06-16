@@ -6,6 +6,12 @@
     background-image: none !important;
     background-color: #004e7f !important;
   }
+  body.full-background .container {
+    max-width: none !important;
+    width: 100% !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
   .watermark-logo {
     position: fixed;
     top: 0;
@@ -22,7 +28,64 @@
     bottom: 0;
     background: #004e7f;
   }
-  .container, .row, .col-12, .col-md-4, .card, .card-body {
+  .vote-candidates-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 0.75rem;
+    width: 100%;
+  }
+  @media (min-width: 576px) {
+    .vote-candidates-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+  }
+  @media (min-width: 768px) {
+    .vote-candidates-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    }
+  }
+  @media (min-width: 992px) {
+    .vote-candidates-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+      gap: 1rem;
+    }
+  }
+  @media (min-width: 1400px) {
+    .vote-candidates-grid {
+      grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+    }
+  }
+  @media (min-width: 1800px) {
+    .vote-candidates-grid {
+      grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+    }
+  }
+  .vote-candidates-grid .candidate-card {
+    width: 100%;
+    min-width: 0;
+  }
+  .vote-candidates-grid .candidate-card:hover {
+    transform: none;
+  }
+  .vote-candidates-grid .vote-photo {
+    width: 100% !important;
+    height: auto !important;
+    max-width: none !important;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    display: block;
+    margin: 0.5rem auto 0;
+  }
+  .vote-candidates-grid .card-body {
+    padding: 0.5rem 0.35rem 0.85rem;
+  }
+  .vote-candidates-grid .card-title {
+    font-size: clamp(0.8rem, 0.95vw, 0.95rem);
+    line-height: 1.2;
+    margin-bottom: 0.5rem;
+    word-break: break-word;
+  }
+  .container, .row, .card, .card-body {
     position: relative;
     z-index: 1;
   }
@@ -33,46 +96,36 @@
     font-weight: bold;
     box-shadow: 0 2px 6px rgba(40,167,69,0.15);
     transition: background 0.2s;
+    width: 100%;
+    max-width: 110px;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.9rem;
   }
   .btn-vote:hover, .btn-vote:focus {
     background-color: #218838 !important;
     color: #fff !important;
   }
-  .voted-label {
-    display: inline-block;
-    background: #dc3545;
-    color: #fff;
-    font-weight: bold;
-    padding: 0.4em 1.2em;
-    border-radius: 1.5em;
-    margin-top: 0.5em;
-    font-size: 1.1em;
-    box-shadow: 0 2px 6px rgba(220,53,69,0.15);
-  }
 </style>
 <img src="{{ logo_url }}" alt="Logo" class="watermark-logo" />
 <div class="row">
     <div class="col-12">
-        <h2 class="mb-4 text-white text-shadow fw-bold">{{ post.replace('_', ' ').title() }}</h2>
-        <!-- <p class="lead text-white text-shadow">Select your candidate:</p> -->
+        <h2 class="mb-3 text-white text-shadow fw-bold">{{ post.replace('_', ' ').title() }}</h2>
     </div>
 </div>
 
-<div class="row">
+<div class="vote-candidates-grid">
     {% for candidate in candidates %}
-    <div class="col-md-4 mb-4">
-        <div class="card candidate-card bg-transparent border-0">
-            <img src="{{ candidate_images[candidate] }}" 
-                 class="card-img-top candidate-image mx-auto mt-3" 
-                 alt="{{ candidate }}"
-                 onerror="this.src='/static/images/contact.png'">
-            <div class="card-body text-center">
-                <h5 class="card-title text-white text-shadow">{{ candidate }}</h5>
-                <form method="POST" action="/vote/{{ post }}">
-                    <input type="hidden" name="candidate" value="{{ candidate }}">
-                    <button type="submit" class="btn btn-vote">Vote</button>
-                </form>
-            </div>
+    <div class="candidate-card bg-transparent border-0">
+        <img src="{{ candidate_images[candidate] }}"
+             class="vote-photo"
+             alt="{{ candidate }}"
+             onerror="this.src='/static/images/contact.png'">
+        <div class="card-body text-center">
+            <h5 class="card-title text-white text-shadow">{{ candidate }}</h5>
+            <form method="POST" action="/vote/{{ post }}">
+                <input type="hidden" name="candidate" value="{{ candidate }}">
+                <button type="submit" class="btn btn-vote">Vote</button>
+            </form>
         </div>
     </div>
     {% endfor %}
@@ -83,4 +136,4 @@
         <a href="/posts" class="btn btn-light">Back to Posts</a>
     </div>
 </div>
-{% endblock %} 
+{% endblock %}

@@ -26,6 +26,7 @@ share/
 # Local / generated
 build/
 dist/
+release/
 .cursor/
 
 # Secrets and runtime data (use config.example.json as a template)

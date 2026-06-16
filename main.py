@@ -1,6 +1,5 @@
 import os
 import sys
-import shutil
 import json
 import uuid
 import webbrowser
@@ -45,13 +44,28 @@ app_id = hashlib.sha256(EXTERNAL_FILES_PATH.encode()).hexdigest()[:10] # Short h
 LOCK_FILE_NAME = f"election_app_{app_id}.lock" # More unique name
 LOCK_FILE_PATH = os.path.join(tempfile.gettempdir(), LOCK_FILE_NAME)
 
-# Define settings directory and file paths
+# Define settings / config paths (bundled in exe; optional flat override beside exe in dev)
 SETTINGS_DIR = os.path.join(EXTERNAL_FILES_PATH, "settings")
-CONFIG_FILE = os.path.join(SETTINGS_DIR, "config.json")
-CANDIDATES_FILE = os.path.join(SETTINGS_DIR, "candidates.json")
 
-# Ensure settings directory exists
-if not os.path.exists(SETTINGS_DIR):
+def resolve_resource_file(filename: str, bundled_alternate_names: Optional[List[str]] = None) -> str:
+    """Find a file: optional override beside exe, then bundled in exe, then dev settings folder."""
+    search: List[str] = [
+        os.path.join(EXTERNAL_FILES_PATH, filename),
+        os.path.join(SETTINGS_DIR, filename),
+    ]
+    for alt in bundled_alternate_names or []:
+        search.append(os.path.join(APPLICATION_PATH, "settings", alt))
+    search.append(os.path.join(APPLICATION_PATH, "settings", filename))
+    for path in search:
+        if os.path.isfile(path):
+            return path
+    return os.path.join(SETTINGS_DIR, filename)
+
+CONFIG_FILE = resolve_resource_file("config.json", ["config.example.json"])
+CANDIDATES_FILE = resolve_resource_file("candidates.json")
+
+# Dev mode: ensure settings directory exists for writable defaults
+if not getattr(sys, "frozen", False) and not os.path.exists(SETTINGS_DIR):
     os.makedirs(SETTINGS_DIR)
 
 def generate_secret_key():
@@ -59,13 +73,16 @@ def generate_secret_key():
     return secrets.token_urlsafe(32)  # 32 bytes = 256 bits of entropy
 
 def load_config():
-    """Load configuration from config.json file."""
+    """Load configuration from bundled file, optional override beside exe, or dev settings/."""
     try:
         with open(CONFIG_FILE, 'r') as f:
             config = json.load(f)
             return config
     except FileNotFoundError:
-        # Create default config if file doesn't exist
+        if getattr(sys, "frozen", False):
+            raise Exception(
+                "Configuration missing from application bundle. Rebuild the exe with settings/config.example.json."
+            )
         default_config = {
             "school_name": "Your School Name",
             "logo_url": "/static/images/school_logo.svg",
@@ -90,7 +107,7 @@ def load_config():
             json.dump(default_config, f, indent=4)
         return default_config
     except json.JSONDecodeError:
-        raise Exception("Invalid config.json file. Please check the file format.")
+        raise Exception(f"Invalid config file: {CONFIG_FILE}")
 
 def apply_sync_defaults(cfg: dict) -> None:
     """Ensure LAN sync keys exist (defaults: secondary, discovery on, empty secret)."""
@@ -106,12 +123,15 @@ def apply_sync_defaults(cfg: dict) -> None:
             cfg[k] = v
 
 def load_candidates() -> Dict[str, List[str]]:
-    """Load candidates from JSON file."""
+    """Load candidates from bundled file, optional override beside exe, or dev settings/."""
     try:
         with open(CANDIDATES_FILE, 'r') as f:
             return json.load(f)
     except FileNotFoundError:
-        # Create empty candidates file if it doesn't exist
+        if getattr(sys, "frozen", False):
+            raise Exception(
+                "Candidates missing from application bundle. Rebuild the exe with settings/candidates.json."
+            )
         default_candidates = {
             "school_people_leader": [],
             "assistant_school_people_leader": []
@@ -120,7 +140,7 @@ def load_candidates() -> Dict[str, List[str]]:
             json.dump(default_candidates, f, indent=4)
         return default_candidates
     except json.JSONDecodeError:
-        raise Exception("Invalid candidates.json file. Please check the file format.")
+        raise Exception(f"Invalid candidates file: {CANDIDATES_FILE}")
 
 # Load configuration
 config = load_config()
@@ -163,41 +183,21 @@ app = FastAPI()
 server_running = True
 server = None  # Global server reference
 
-# Ensure external directories exist for static files and images
-STATIC_DIR_PATH = os.path.join(EXTERNAL_FILES_PATH, "static")
+# Static files: bundled inside exe on client laptops; beside project folder in dev
+if getattr(sys, "frozen", False):
+    STATIC_DIR_PATH = os.path.join(APPLICATION_PATH, "static")
+else:
+    STATIC_DIR_PATH = os.path.join(EXTERNAL_FILES_PATH, "static")
 STATIC_IMAGES_PATH = os.path.join(STATIC_DIR_PATH, "images")
 STATIC_CANDIDATES_PATH = os.path.join(STATIC_IMAGES_PATH, "candidates")
 
-if not os.path.exists(STATIC_DIR_PATH):
-    os.makedirs(STATIC_DIR_PATH)
-if not os.path.exists(STATIC_IMAGES_PATH):
-    os.makedirs(STATIC_IMAGES_PATH)
-if not os.path.exists(STATIC_CANDIDATES_PATH):
-    os.makedirs(STATIC_CANDIDATES_PATH)
-
-def _copy_tree_overwrite(src_root: str, dst_root: str) -> None:
-    """Copy all files under src_root into dst_root (overwrite)."""
-    if not os.path.isdir(src_root):
-        return
-    os.makedirs(dst_root, exist_ok=True)
-    for root, _dirs, files in os.walk(src_root):
-        rel = os.path.relpath(root, src_root)
-        target_dir = dst_root if rel == "." else os.path.join(dst_root, rel)
-        os.makedirs(target_dir, exist_ok=True)
-        for name in files:
-            shutil.copy2(os.path.join(root, name), os.path.join(target_dir, name))
-
-def sync_static_css_js_from_bundle() -> None:
-    """Frozen exe: templates read from bundle, but /static is served from beside the exe — copy css/js from bundle every launch."""
-    if not getattr(sys, "frozen", False):
-        return
-    bundled = os.path.join(APPLICATION_PATH, "static")
-    if not os.path.isdir(bundled):
-        return
-    for sub in ("css", "js"):
-        _copy_tree_overwrite(os.path.join(bundled, sub), os.path.join(STATIC_DIR_PATH, sub))
-
-sync_static_css_js_from_bundle()
+if not getattr(sys, "frozen", False):
+    if not os.path.exists(STATIC_DIR_PATH):
+        os.makedirs(STATIC_DIR_PATH)
+    if not os.path.exists(STATIC_IMAGES_PATH):
+        os.makedirs(STATIC_IMAGES_PATH)
+    if not os.path.exists(STATIC_CANDIDATES_PATH):
+        os.makedirs(STATIC_CANDIDATES_PATH)
 
 def ensure_background_image():
     """Ensure the background image exists, create a default one if it doesn't."""
@@ -207,8 +207,8 @@ def ensure_background_image():
         background_file = os.path.basename(background_url)
         background_path = os.path.join(STATIC_IMAGES_PATH, background_file)
         
-        # If background image doesn't exist, create a default one
-        if not os.path.exists(background_path):
+        # If background image doesn't exist, create a default one (dev / writable static only)
+        if not os.path.exists(background_path) and not getattr(sys, "frozen", False):
             try:
                 # Create a simple gradient background
                 img = Image.new('RGB', (1920, 1080), color='#1a237e')
@@ -226,7 +226,7 @@ def ensure_background_image():
             except Exception as e:
                 print(f"Error creating background image: {e}")
 
-# Mount static files (including images) - external to exe
+# Mount static files from bundle (exe) or project folder (dev)
 app.mount("/static", StaticFiles(directory=STATIC_DIR_PATH), name="static")
 
 # Ensure background image exists
@@ -627,17 +627,21 @@ def migrate_votes_file_if_needed() -> None:
                         cand,
                         MACHINE_ID or "legacy",
                     ])
-                ws.delete_rows(1, ws.max_row)
-                ws.append(VOTES_HEADER_NEW)
+                wb.close()
+                out_wb = Workbook()
+                out_ws = out_wb.active
+                out_ws.append(VOTES_HEADER_NEW)
                 for r in rows_out:
-                    ws.append(r)
-                for cell in ws[1]:
+                    out_ws.append(r)
+                for cell in out_ws[1]:
                     cell.font = openpyxl.styles.Font(bold=True)
                     cell.alignment = openpyxl.styles.Alignment(horizontal='center')
                 for col_letter, w in zip(["A", "B", "C", "D", "E"], [36, 20, 30, 30, 24]):
-                    ws.column_dimensions[col_letter].width = w
-                wb.save(VOTES_FILE)
+                    out_ws.column_dimensions[col_letter].width = w
+                out_wb.save(VOTES_FILE)
+                out_wb.close()
                 print("Migrated votes.xlsx to multi-LAN schema (VoteId, SourceMachine).")
+                return
             wb.close()
     except filelock.Timeout:
         raise Exception("Could not migrate votes file (lock timeout).")
@@ -789,15 +793,21 @@ def get_results() -> Dict[str, Dict[str, int]]:
             header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
             headers = [str(h or "").strip() for h in header_row]
             try:
-                pi = headers.index("Post")
-                ci = headers.index("CandidateName")
+                pi = int(headers.index("Post"))
+                ci = int(headers.index("CandidateName"))
             except ValueError:
-                pi, ci = 1, 2
+                pi, ci = 2, 3
+                if len(headers) >= 3 and str(headers[0] or "").strip() == "Timestamp":
+                    pi, ci = 1, 2
             for row in ws.iter_rows(min_row=2, values_only=True):
                 if not row or len(row) <= max(pi, ci):
                     continue
                 post = row[pi]
                 candidate = row[ci]
+                if post is None or candidate is None:
+                    continue
+                post = str(post).strip()
+                candidate = str(candidate).strip()
                 if not post or not candidate:
                     continue
                 if post not in results:
@@ -819,40 +829,58 @@ def get_results() -> Dict[str, Dict[str, int]]:
             raise Exception(f"Error reading results: {str(e)}")
 
 def cleanup_votes_file():
-    """Remove any empty rows from the votes file."""
+    """Remove blank rows from votes.xlsx (safe rewrite — avoids openpyxl delete_rows issues)."""
     if not os.path.exists(VOTES_FILE):
         return
-        
+
     lock_file = f"{VOTES_FILE}.lock"
     lock = filelock.FileLock(lock_file)
-    
+
     try:
         with lock.acquire(timeout=5):
-            wb = openpyxl.load_workbook(VOTES_FILE)
+            wb = openpyxl.load_workbook(VOTES_FILE, read_only=True, data_only=True)
             ws = wb.active
-            
-            # Get all rows
             rows = list(ws.iter_rows(values_only=True))
-            
-            # Filter out empty rows
-            valid_rows = [row for row in rows if all(cell is not None and str(cell).strip() != "" for cell in row)]
-            
-            # Clear the worksheet
-            ws.delete_rows(1, ws.max_row)
-            
-            # Write back valid rows
+            wb.close()
+
+            if not rows:
+                return
+
+            header = rows[0]
+            header_label = str(header[0] or "").strip() if header else ""
+            valid_rows: List[tuple] = [header]
+
+            for row in rows[1:]:
+                if not row:
+                    continue
+                if all(cell is None or str(cell).strip() == "" for cell in row):
+                    continue
+                valid_rows.append(row)
+
+            if len(valid_rows) == len(rows):
+                return
+
+            out_wb = Workbook()
+            out_ws = out_wb.active
             for row in valid_rows:
-                ws.append(row)
-                
-            wb.save(VOTES_FILE)
+                out_ws.append(list(row))
+            out_wb.save(VOTES_FILE)
+            out_wb.close()
     except filelock.Timeout:
         raise Exception("Could not acquire lock on votes file for cleanup.")
     finally:
         if os.path.exists(lock_file):
             try:
                 os.remove(lock_file)
-            except:
+            except Exception:
                 pass
+
+def sort_results_for_display(results: Dict[str, Dict[str, int]]) -> Dict[str, List[Tuple[str, int]]]:
+    """Sort candidates by vote count (high to low) for the results template."""
+    return {
+        post: sorted(cand_map.items(), key=lambda item: item[1], reverse=True)
+        for post, cand_map in results.items()
+    }
 
 def get_candidate_image(candidate_name: str) -> str:
     """Get the path to a candidate's image, or return default if not found."""
@@ -1428,12 +1456,14 @@ async def results(request: Request):
         # Clean up any empty rows before showing results
         cleanup_votes_file()
         
-        results = get_results()
+        vote_results = get_results()
+        sorted_results = sort_results_for_display(vote_results)
         msg = request.query_params.get("msg")
         is_primary = NODE_ROLE == "primary"
         return templates.TemplateResponse("results.html", {
             "request": request,
-            "results": results,
+            "results": vote_results,
+            "sorted_results": sorted_results,
             "school_name": SCHOOL_NAME,
             "logo_url": LOGO_URL,
             "theme_name": THEME_NAME,
@@ -1445,8 +1475,17 @@ async def results(request: Request):
             "results_msg": msg,
             **session_template_vars(request),
         })
-    except:
-        return RedirectResponse(url="/", status_code=303)
+    except Exception as e:
+        print(f"Results page error: {e}")
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_message": f"Could not load results: {e}",
+            "school_name": SCHOOL_NAME,
+            "logo_url": LOGO_URL,
+            "theme_name": THEME_NAME,
+            "background_url": BACKGROUND_URL,
+            **session_template_vars(request),
+        })
 
 @app.get("/admin/lan-monitor", response_class=HTMLResponse)
 async def admin_lan_monitor(request: Request):
