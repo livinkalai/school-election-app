@@ -1,13 +1,13 @@
 {
-    "node_role": "primary",
-    "sync_secret": "SAME_SECRET_ON_ALL_MACHINES",
+    "node_role": "secondary",
+    "sync_secret": "karthik",
     "lan_discovery": true,
     "lan_scan_cidrs": [],
-    "school_name": "Your School Name",
+    "school_name": "TTAC",
     "logo_url": "/static/images/school_logo.jpg",
     "background_url": "/static/images/school_bg.jpg",
     "admin_username": "admin",
-    "admin_password": "CHANGE_ME",
+    "admin_password": "admin@123",
     "theme_name": "primary",
     "available_themes": [
         "primary",

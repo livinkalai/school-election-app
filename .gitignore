@@ -31,6 +31,7 @@ release/
 
 # Secrets and runtime data (use config.example.json as a template)
 settings/config.json
+tools/.license-signing-key
 votes.xlsx
 peer_lan_state.json
 pending_sync.jsonl

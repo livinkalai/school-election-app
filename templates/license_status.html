@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card bg-dark bg-opacity-75 border-light">
+            <div class="card-header border-light">
+                <h3 class="text-white text-shadow fw-bold mb-0">License Information</h3>
+            </div>
+            <div class="card-body text-white">
+                {% if license_enforced %}
+                    {% if license_days_remaining <= 2 %}
+                    <div class="alert alert-warning">
+                        <strong>Expiring soon.</strong> This installation has {{ license_days_remaining }} day(s) remaining.
+                    </div>
+                    {% else %}
+                    <div class="alert alert-success mb-3">
+                        <strong>Active.</strong> {{ license_days_remaining }} day(s) remaining on this laptop.
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <div class="alert alert-info mb-3">
+                        Development mode — license enforcement is disabled.
+                    </div>
+                {% endif %}
+
+                <table class="table table-dark table-striped table-bordered mb-0">
+                    <tbody>
+                        <tr>
+                            <th scope="row" style="width: 38%;">Licensed school</th>
+                            <td>{{ licensed_school }}</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">License ID</th>
+                            <td><code>{{ license_id }}</code></td>
+                        </tr>
+                        <tr>
+                            <th scope="row">First launch (this laptop)</th>
+                            <td>{{ license_first_run_display }}</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Expires</th>
+                            <td>{{ license_expires_display }}</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Time remaining</th>
+                            <td>{{ license_time_remaining }}</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Issued at build</th>
+                            <td>{{ license_issued_at_display }}</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Developer</th>
+                            <td>
+                                {{ developer_name }}
+                                {% if developer_contact %}
+                                <span class="text-white-50">({{ developer_contact }})</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-footer border-light text-center">
+                <a href="/results" class="btn btn-light me-2">Back to Results</a>
+                <a href="/" class="btn btn-outline-light">Home</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

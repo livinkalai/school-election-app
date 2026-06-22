@@ -29,24 +29,17 @@
 <div class="row mb-3">
     <div class="col-12">
         <div class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2">
-            <span>No Secondary machines were found for Collect Now.</span>
+            <span>No Secondary machines were found for Collect Now. Open <strong>Connected devices</strong> and scan the LAN first, or wait until a Secondary has pushed at least one vote.</span>
             <a href="/admin/lan-monitor" class="btn btn-sm btn-dark">Connected devices</a>
         </div>
-    </div>
-</div>
-{% endif %}
-{% if not is_primary and last_push_error %}
-<div class="row mb-3">
-    <div class="col-12">
-        <div class="alert alert-warning mb-0"><strong>Last push to Primary failed:</strong> {{ last_push_error }}</div>
     </div>
 </div>
 {% endif %}
 <div class="row mb-4">
     <div class="col-12 text-center">
         {% if is_primary %}
-        <form method="post" action="/admin/collect-now" class="d-inline me-2">
-            <button type="submit" class="btn btn-warning" {% if not sync_secret_set %}disabled title="Configure sync_secret in settings/config.json"{% endif %}>Collect Now</button>
+        <form method="post" action="/admin/collect-now" class="d-inline me-2" id="collect-now-form">
+            <button type="submit" id="collect-now-btn" class="btn btn-warning" {% if not sync_secret_set %}disabled title="Configure sync_secret in settings/config.json"{% endif %}>Collect Now</button>
         </form>
         <a href="/admin/lan-monitor" class="btn btn-info me-2">Connected devices</a>
         {% endif %}
@@ -108,4 +101,15 @@
         <a href="/" class="btn btn-light">Back to Home</a>
     </div>
 </div>
+<script>
+(function () {
+    const form = document.getElementById('collect-now-form');
+    const btn = document.getElementById('collect-now-btn');
+    if (!form || !btn) return;
+    form.addEventListener('submit', function () {
+        btn.disabled = true;
+        btn.textContent = 'Collecting…';
+    });
+})();
+</script>
 {% endblock %} 

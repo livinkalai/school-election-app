@@ -11,6 +11,7 @@ a = Analysis(
         ('static', 'static'),
         ('settings/config.example.json', 'settings'),
         ('settings/candidates.json', 'settings'),
+        ('build/license_embed.py', 'build'),
     ],
     hiddenimports=[],
     hookspath=[],

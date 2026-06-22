@@ -232,7 +232,7 @@ Each client needs **only the `.exe`** (and optionally a single `config.json` bes
 Then build:
 
 ```
-.\package-release.ps1
+.\package-release.ps1 -SchoolName "ABC School" -ValidDays 10 -LicenseeId "abc-2026-june"
 ```
 
 Copy `release\school-election-app.exe` to each laptop. On first vote, `votes.xlsx` is created **beside the exe** on that machine (each laptop keeps its own votes file).

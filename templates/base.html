@@ -117,7 +117,9 @@
                 <div class="d-flex flex-wrap gap-2 ms-auto">
                     {% if is_admin %}
                     <a href="/results" class="btn btn-light">View Results</a>
+                    {% if is_primary_node %}
                     <a href="/admin/lan-monitor" class="btn btn-light">LAN Monitor</a>
+                    {% endif %}
                     <a href="/shutdown" class="btn btn-light" onclick="return confirm('Are you sure you want to close the application?')">Close Application</a>
                     {% elif is_student %}
                     <a href="/end-voting" class="btn btn-light" onclick="return confirm('Are you sure you want to end voting?')">End Voting</a>
@@ -130,7 +132,6 @@
     <div class="container mt-4">
         {% block content %}{% endblock %}
     </div>
-
     <script src="/static/js/bootstrap.bundle.min.js"></script>
 </body>
 </html> 

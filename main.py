@@ -7,13 +7,14 @@ import threading
 import time
 import socket
 import ipaddress
+import asyncio
 import secrets  # For generating secure random key
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from urllib.parse import urlparse
 from fastapi import FastAPI, Request, Form, HTTPException, Response, Header
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
@@ -25,6 +26,13 @@ import tempfile # Needed for robust temporary file path
 import hashlib # Needed for unique lock file name
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
+from license_manager import (
+    LicenseError,
+    initialize_runtime_license,
+    enforce_license_or_raise,
+    get_license_template_context,
+    get_license_status,
+)
 
 # matplotlib / reportlab are imported inside export helpers only (avoids numpy init issues in PyInstaller onefile).
 
@@ -37,6 +45,17 @@ else:
     # Running in a normal Python environment
     APPLICATION_PATH = os.path.dirname(os.path.abspath(__file__))
     EXTERNAL_FILES_PATH = os.path.dirname(os.path.abspath(__file__))
+
+# Initialize runtime licensing early (before config is applied).
+try:
+    initialize_runtime_license(
+        application_path=APPLICATION_PATH,
+        external_path=EXTERNAL_FILES_PATH,
+        is_frozen=bool(getattr(sys, "frozen", False)),
+    )
+except LicenseError as license_boot_error:
+    print(f"License validation failed: {license_boot_error}")
+    sys.exit(1)
 
 # Define the lock file path in a temporary directory for single instance enforcement
 # Using a unique name derived from the app's base path for distinct instances
@@ -146,6 +165,13 @@ def load_candidates() -> Dict[str, List[str]]:
 config = load_config()
 apply_sync_defaults(config)
 
+# In frozen deployments, school identity is license-controlled.
+if getattr(sys, "frozen", False):
+    status = get_license_status()
+    licensed_school_name = str(status.get("school_name") or "").strip()
+    if licensed_school_name:
+        config["school_name"] = licensed_school_name
+
 # Generate a secure secret key for session management
 SECRET_KEY = generate_secret_key()
 
@@ -168,9 +194,21 @@ def parse_session_data(cookie_val: Optional[str]) -> Optional[dict]:
 def session_template_vars(request: Request) -> dict:
     """Navbar: is_admin from cookie (password login). Machine roles are only primary | secondary."""
     data = parse_session_data(request.cookies.get("session"))
+    license_ctx = get_license_template_context()
+    branding = branding_static_urls()
     if not data:
-        return {"is_admin": False}
-    return {"is_admin": data.get("is_admin") is True}
+        return {
+            "is_admin": False,
+            "is_primary_node": NODE_ROLE == "primary",
+            **branding,
+            **license_ctx,
+        }
+    return {
+        "is_admin": data.get("is_admin") is True,
+        "is_primary_node": NODE_ROLE == "primary",
+        **branding,
+        **license_ctx,
+    }
 
 # Get theme settings from config
 THEME_NAME = config.get("theme_name", "primary")
@@ -183,11 +221,13 @@ app = FastAPI()
 server_running = True
 server = None  # Global server reference
 
-# Static files: bundled inside exe on client laptops; beside project folder in dev
+# Static files: optional override beside exe, else bundled in exe, else dev project folder
+EXTERNAL_STATIC_DIR = os.path.join(EXTERNAL_FILES_PATH, "static")
+BUNDLED_STATIC_DIR = os.path.join(APPLICATION_PATH, "static")
 if getattr(sys, "frozen", False):
-    STATIC_DIR_PATH = os.path.join(APPLICATION_PATH, "static")
+    STATIC_DIR_PATH = EXTERNAL_STATIC_DIR if os.path.isdir(EXTERNAL_STATIC_DIR) else BUNDLED_STATIC_DIR
 else:
-    STATIC_DIR_PATH = os.path.join(EXTERNAL_FILES_PATH, "static")
+    STATIC_DIR_PATH = EXTERNAL_STATIC_DIR
 STATIC_IMAGES_PATH = os.path.join(STATIC_DIR_PATH, "images")
 STATIC_CANDIDATES_PATH = os.path.join(STATIC_IMAGES_PATH, "candidates")
 
@@ -232,6 +272,27 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR_PATH), name="static")
 # Ensure background image exists
 ensure_background_image()
 
+def static_url_with_version(url: str) -> str:
+    """Append ?v=mtime so browser picks up replaced images beside the exe."""
+    if not url or not url.startswith("/static/"):
+        return url
+    base_url, _, _ = url.partition("?")
+    rel = base_url[len("/static/"):].lstrip("/").replace("/", os.sep)
+    for base in (STATIC_DIR_PATH, BUNDLED_STATIC_DIR):
+        path = os.path.join(base, rel)
+        if os.path.isfile(path):
+            return f"{base_url}?v={int(os.path.getmtime(path))}"
+    return url
+
+
+def branding_static_urls() -> Dict[str, str]:
+    """Fresh cache-busted URLs for branding images (re-read mtime each request)."""
+    return {
+        "logo_url": static_url_with_version(config.get("logo_url", "")),
+        "background_url": static_url_with_version(config.get("background_url", "")),
+        "default_contact_image": static_url_with_version("/static/images/contact.png"),
+    }
+
 templates = Jinja2Templates(directory=os.path.join(APPLICATION_PATH, "templates"))
 
 # File paths - external to exe
@@ -241,8 +302,8 @@ VOTES_FILE = os.path.join(EXTERNAL_FILES_PATH, "votes.xlsx")
 ADMIN_USERNAME = config["admin_username"]
 ADMIN_PASSWORD = config["admin_password"]
 SCHOOL_NAME = config["school_name"]
-LOGO_URL = config.get("logo_url", "")
-BACKGROUND_URL = config.get("background_url", "")
+LOGO_URL = static_url_with_version(config.get("logo_url", ""))
+BACKGROUND_URL = static_url_with_version(config.get("background_url", ""))
 
 MACHINE_ID = (config.get("machine_id") or "").strip() or socket.gethostname()
 _raw_node_role = (config.get("node_role") or "secondary").strip().lower()
@@ -251,8 +312,11 @@ SYNC_SECRET = (config.get("sync_secret") or "").strip()
 LAN_DISCOVERY = bool(config.get("lan_discovery", True))
 LAN_SCAN_CIDRS: List[str] = [str(c).strip() for c in (config.get("lan_scan_cidrs") or []) if str(c).strip()]
 LAN_PEER_TIMEOUT = float(config.get("lan_peer_timeout", 0.35))
+LAN_COLLECT_TIMEOUT = float(config.get("lan_collect_timeout", 4))
 LAN_SCAN_WORKERS = int(config.get("lan_scan_workers", 64))
 MAX_LAN_SCAN_HOSTS = int(config.get("max_lan_scan_hosts", 512))
+# Bypass system proxy for LAN HTTP (avoids hangs on WiFi with no internet / captive portal).
+_NO_PROXY = {"http": None, "https": None}
 
 VOTES_HEADER_NEW = ["VoteId", "Timestamp", "Post", "CandidateName", "SourceMachine"]
 PENDING_SYNC_FILE = os.path.join(EXTERNAL_FILES_PATH, "pending_sync.jsonl")
@@ -261,26 +325,65 @@ PEER_STATE_LOCK_FILE = os.path.join(EXTERNAL_FILES_PATH, "peer_lan_state.json.lo
 _last_sync_status: Dict[str, Any] = {"last_push_error": None, "last_collect": None}
 _sync_stop = threading.Event()
 _lan_primary_cache: Dict[str, Any] = {"urls": [], "ts": 0.0}
+_lan_secondary_cache: Dict[str, Any] = {"urls": [], "ts": 0.0}
 _LAN_PRIMARY_CACHE_TTL_SEC = 90.0
+_LAN_SECONDARY_CACHE_TTL_SEC = 90.0
+
+
+def _lan_request_kwargs(timeout: float) -> Dict[str, Any]:
+    return {"timeout": timeout, "proxies": _NO_PROXY}
+
+
+def get_export_branding_line() -> str:
+    status = get_license_status()
+    school = status.get("school_name") or SCHOOL_NAME
+    developer = status.get("developer_name") or "EmpowerID"
+    expires = status.get("expires_at") or "N/A"
+    return f"Licensed to {school} | Valid until {expires} | Developed by {developer}"
+
+
+def ensure_primary_node_or_forbidden() -> None:
+    if NODE_ROLE != "primary":
+        raise HTTPException(status_code=403, detail="Primary node required for this action.")
+
+
+@app.middleware("http")
+async def license_enforcement_middleware(request: Request, call_next):
+    # Static assets are allowed so the expired page can render normally.
+    if request.url.path.startswith("/static/"):
+        return await call_next(request)
+    try:
+        enforce_license_or_raise()
+    except LicenseError as e:
+        if request.url.path.startswith("/api/"):
+            return JSONResponse(status_code=403, content={"detail": str(e)})
+        return templates.TemplateResponse(
+            "license_expired.html",
+            {
+                "request": request,
+                "school_name": SCHOOL_NAME,
+                "theme_name": THEME_NAME,
+                "error_message": str(e),
+                **branding_static_urls(),
+                **get_license_template_context(),
+            },
+            status_code=403,
+        )
+    return await call_next(request)
 
 def get_local_ipv4_addresses() -> List[str]:
-    """IPv4 addresses for this machine (excludes loopback)."""
+    """IPv4 addresses for this machine (excludes loopback). No DNS or internet required."""
     out: set = set()
-    try:
-        hostname = socket.gethostname()
-        for res in socket.getaddrinfo(hostname, None, socket.AF_INET):
-            ip = res[4][0]
-            if not str(ip).startswith("127."):
-                out.add(ip)
-    except Exception:
-        pass
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        out.add(s.getsockname()[0])
-        s.close()
-    except Exception:
-        pass
+    for probe_host in ("255.255.255.255", "10.255.255.255", "192.168.255.255"):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(0.15)
+                s.connect((probe_host, 1))
+                ip = s.getsockname()[0]
+                if ip and not str(ip).startswith("127."):
+                    out.add(ip)
+        except Exception:
+            continue
     return list(out)
 
 def get_scan_networks() -> List[ipaddress.IPv4Network]:
@@ -314,7 +417,7 @@ def _probe_peer_base(base: str, want_role: str) -> Optional[str]:
         r = requests.get(
             f"{base}/api/sync/peer",
             headers=_sync_headers(),
-            timeout=LAN_PEER_TIMEOUT,
+            **_lan_request_kwargs(LAN_PEER_TIMEOUT),
         )
         if r.status_code != 200:
             return None
@@ -387,11 +490,25 @@ def get_effective_primary_urls() -> List[str]:
     _lan_primary_cache["ts"] = now
     return list(urls)
 
-def get_effective_secondary_urls() -> List[str]:
-    """Known secondaries (peer state + LAN scan)."""
+def get_effective_secondary_urls(*, allow_lan_scan: bool = True) -> List[str]:
+    """Known secondaries from peer state; optional cached LAN scan when none known."""
     if not LAN_DISCOVERY or not SYNC_SECRET:
         return []
-    return get_monitored_secondary_bases(scan_lan=True)
+    known = get_monitored_secondary_bases(scan_lan=False)
+    if known:
+        return known
+    if not allow_lan_scan:
+        return []
+    now = time.time()
+    if (
+        _lan_secondary_cache["urls"]
+        and (now - float(_lan_secondary_cache["ts"])) < _LAN_SECONDARY_CACHE_TTL_SEC
+    ):
+        return list(_lan_secondary_cache["urls"])
+    urls = discover_bases_for_role("secondary")
+    _lan_secondary_cache["urls"] = urls
+    _lan_secondary_cache["ts"] = now
+    return list(urls)
 
 def _default_peer_state() -> dict:
     return {"secondaries": {}, "primaries": {}}
@@ -446,7 +563,7 @@ def probe_peer_live(base: str) -> dict:
         r = requests.get(
             f"{base.rstrip('/')}/api/sync/peer",
             headers=_sync_headers(),
-            timeout=0.8,
+            **_lan_request_kwargs(0.8),
         )
         if r.status_code != 200:
             return {"ok": False, "error": f"HTTP {r.status_code}"}
@@ -884,16 +1001,13 @@ def sort_results_for_display(results: Dict[str, Dict[str, int]]) -> Dict[str, Li
 
 def get_candidate_image(candidate_name: str) -> str:
     """Get the path to a candidate's image, or return default if not found."""
-    # Try to find the image in the candidates folder
     candidate_image = os.path.join("candidates", f"{candidate_name}.png")
     candidate_image_path = os.path.join(STATIC_CANDIDATES_PATH, f"{candidate_name}.png")
-    
-    # If candidate image exists, return its path
+
     if os.path.exists(candidate_image_path):
-        return f"/static/images/{candidate_image}"
-    
-    # Return default image if candidate image not found
-    return "/static/images/contact.png"
+        return static_url_with_version(f"/static/images/{candidate_image}")
+
+    return static_url_with_version("/static/images/contact.png")
 
 def _sync_headers() -> Dict[str, str]:
     h: Dict[str, str] = {}
@@ -924,7 +1038,9 @@ def push_vote_to_primaries(vote_id: str, ts: datetime, post: str, candidate: str
     for base in targets:
         url = f"{base}/api/votes/ingest"
         try:
-            r = requests.post(url, json=body, headers=headers, timeout=8)
+            r = requests.post(
+                url, json=body, headers=headers, **_lan_request_kwargs(8),
+            )
             if r.status_code in (200, 201):
                 ok_count += 1
                 merge_peer_section("primaries", base, {
@@ -983,7 +1099,9 @@ def process_pending_sync_queue_once() -> None:
         for base in targets:
             url = f"{base}/api/votes/ingest"
             try:
-                r = requests.post(url, json=body, headers=headers, timeout=8)
+                r = requests.post(
+                url, json=body, headers=headers, **_lan_request_kwargs(8),
+            )
                 if r.status_code in (200, 201):
                     ok_any = True
                     merge_peer_section("primaries", base, {
@@ -1008,6 +1126,20 @@ def sync_retry_worker() -> None:
             process_pending_sync_queue_once()
         except Exception as e:
             print(f"Pending sync retry error: {e}")
+
+
+def license_watchdog_worker() -> None:
+    """Periodic runtime license verification; shuts down server when expired."""
+    while not _sync_stop.is_set():
+        time.sleep(300)
+        try:
+            enforce_license_or_raise()
+        except LicenseError as e:
+            print(f"License watchdog stop: {e}")
+            global server
+            if server:
+                server.should_exit = True
+            break
 
 def parse_iso_timestamp(s: Optional[str]) -> datetime:
     if not s:
@@ -1170,6 +1302,62 @@ async def api_votes_export(x_sync_secret: Optional[str] = Header(None)):
     wb.close()
     return {"votes": rows}
 
+
+def _collect_votes_from_one_secondary(base: str) -> Tuple[str, str, int, int]:
+    """Fetch and merge votes from one Secondary. Returns (base, summary_line, inserted, skipped)."""
+    base = base.rstrip("/")
+    url = f"{base}/api/votes/export"
+    now_iso = datetime.now().isoformat()
+    headers = _sync_headers()
+    try:
+        r = requests.get(url, headers=headers, **_lan_request_kwargs(LAN_COLLECT_TIMEOUT))
+        if r.status_code != 200:
+            merge_peer_section("secondaries", base, {
+                "last_collect_at": now_iso,
+                "last_collect_error": f"HTTP {r.status_code}",
+            })
+            return base, f"{base}: HTTP {r.status_code}", 0, 0
+        payload = r.json()
+        votes = payload.get("votes") or []
+        try:
+            ins, sk = merge_remote_votes(votes)
+        except RuntimeError:
+            merge_peer_section("secondaries", base, {
+                "last_collect_at": now_iso,
+                "last_collect_error": "votes file busy",
+            })
+            return base, f"{base}: votes file busy", 0, 0
+        merge_peer_section("secondaries", base, {
+            "last_collect_at": now_iso,
+            "last_collect_merged": ins,
+            "last_collect_skipped": sk,
+            "last_collect_error": None,
+        })
+        return base, f"{base}: merged {ins} new, {sk} skipped/duplicate", ins, sk
+    except Exception as e:
+        merge_peer_section("secondaries", base, {
+            "last_collect_at": now_iso,
+            "last_collect_error": str(e),
+        })
+        return base, f"{base}: {e}", 0, 0
+
+
+def run_collect_from_secondaries(secondaries: List[str]) -> Dict[str, Any]:
+    """Collect votes from all known Secondaries in parallel (blocking — run off event loop)."""
+    summary: List[str] = []
+    total_in = 0
+    total_skip = 0
+    if not secondaries:
+        return {"summary": summary, "total_in": total_in, "total_skip": total_skip}
+    workers = max(1, min(16, len(secondaries)))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for base, line, ins, sk in ex.map(_collect_votes_from_one_secondary, secondaries):
+            summary.append(line)
+            total_in += ins
+            total_skip += sk
+    return {"summary": summary, "total_in": total_in, "total_skip": total_skip}
+
+
 @app.post("/admin/collect-now")
 async def admin_collect_now(request: Request):
     session = request.cookies.get("session")
@@ -1182,61 +1370,25 @@ async def admin_collect_now(request: Request):
     except Exception:
         return RedirectResponse(url="/", status_code=303)
     if NODE_ROLE != "primary":
-        return RedirectResponse(url="/results?msg=not_primary", status_code=303)
+        raise HTTPException(status_code=403, detail="Primary node required.")
     if not SYNC_SECRET:
         return RedirectResponse(url="/results?msg=no_secret", status_code=303)
-    secondaries = get_effective_secondary_urls()
+    # Prefer known peers (no subnet scan). If none yet, use cached LAN discovery once.
+    secondaries = get_effective_secondary_urls(allow_lan_scan=False)
+    if not secondaries:
+        secondaries = get_effective_secondary_urls(allow_lan_scan=True)
     if not secondaries:
         return RedirectResponse(url="/results?msg=no_secondaries", status_code=303)
-    summary: List[str] = []
-    total_in = 0
-    total_skip = 0
-    headers = _sync_headers()
-    for base in secondaries:
-        url = f"{base}/api/votes/export"
-        now_iso = datetime.now().isoformat()
-        try:
-            r = requests.get(url, headers=headers, timeout=15)
-            if r.status_code != 200:
-                merge_peer_section("secondaries", base, {
-                    "last_collect_at": now_iso,
-                    "last_collect_error": f"HTTP {r.status_code}",
-                })
-                summary.append(f"{base}: HTTP {r.status_code}")
-                continue
-            payload = r.json()
-            votes = payload.get("votes") or []
-            try:
-                ins, sk = merge_remote_votes(votes)
-            except RuntimeError:
-                merge_peer_section("secondaries", base, {
-                    "last_collect_at": now_iso,
-                    "last_collect_error": "votes file busy",
-                })
-                summary.append(f"{base}: votes file busy")
-                continue
-            total_in += ins
-            total_skip += sk
-            merge_peer_section("secondaries", base, {
-                "last_collect_at": now_iso,
-                "last_collect_merged": ins,
-                "last_collect_skipped": sk,
-                "last_collect_error": None,
-            })
-            summary.append(f"{base}: merged {ins} new, {sk} skipped/duplicate")
-        except Exception as e:
-            merge_peer_section("secondaries", base, {
-                "last_collect_at": now_iso,
-                "last_collect_error": str(e),
-            })
-            summary.append(f"{base}: {e}")
-    _last_sync_status["last_collect"] = {"summary": summary, "total_in": total_in, "total_skip": total_skip}
+    collect_result = await asyncio.to_thread(run_collect_from_secondaries, secondaries)
+    _last_sync_status["last_collect"] = collect_result
     return RedirectResponse(url="/results?msg=collect_done", status_code=303)
 
 @app.on_event("startup")
 async def startup_pending_sync():
     t = threading.Thread(target=sync_retry_worker, daemon=True)
     t.start()
+    lt = threading.Thread(target=license_watchdog_worker, daemon=True)
+    lt.start()
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -1470,7 +1622,7 @@ async def results(request: Request):
             "background_url": BACKGROUND_URL,
             "is_primary": is_primary,
             "sync_secret_set": bool(SYNC_SECRET),
-            "last_push_error": _last_sync_status.get("last_push_error"),
+            "last_push_error": _last_sync_status.get("last_push_error") if is_primary else None,
             "last_collect": _last_sync_status.get("last_collect"),
             "results_msg": msg,
             **session_template_vars(request),
@@ -1487,6 +1639,31 @@ async def results(request: Request):
             **session_template_vars(request),
         })
 
+@app.get("/license-status", response_class=HTMLResponse)
+async def license_status_page(request: Request):
+    session = request.cookies.get("session")
+    if not session:
+        return RedirectResponse(url="/", status_code=303)
+    try:
+        data = serializer.loads(session)
+        if not session_is_admin(data):
+            return RedirectResponse(url="/", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/", status_code=303)
+
+    return templates.TemplateResponse(
+        "license_status.html",
+        {
+            "request": request,
+            "school_name": SCHOOL_NAME,
+            "logo_url": LOGO_URL,
+            "theme_name": THEME_NAME,
+            "background_url": BACKGROUND_URL,
+            **get_license_template_context(),
+            **session_template_vars(request),
+        },
+    )
+
 @app.get("/admin/lan-monitor", response_class=HTMLResponse)
 async def admin_lan_monitor(request: Request):
     """Admin dashboard: LAN peers, online status, last collect/push times."""
@@ -1500,16 +1677,11 @@ async def admin_lan_monitor(request: Request):
     except Exception:
         return RedirectResponse(url="/", status_code=303)
 
+    ensure_primary_node_or_forbidden()
     scan = request.query_params.get("scan") == "1"
-    is_primary = NODE_ROLE == "primary"
-    if is_primary:
-        bases = get_monitored_secondary_bases(scan)
-        rows = build_secondary_monitor_rows(bases)
-        title = "Secondary machines (LAN)"
-    else:
-        bases = get_monitored_primary_bases(scan)
-        rows = build_primary_monitor_rows(bases)
-        title = "Primary machines (LAN)"
+    bases = get_monitored_secondary_bases(scan)
+    rows = build_secondary_monitor_rows(bases)
+    title = "Secondary machines (LAN)"
 
     return templates.TemplateResponse("lan_monitor.html", {
         "request": request,
@@ -1517,7 +1689,7 @@ async def admin_lan_monitor(request: Request):
         "logo_url": LOGO_URL,
         "theme_name": THEME_NAME,
         "background_url": BACKGROUND_URL,
-        "is_primary": is_primary,
+        "is_primary": True,
         "machine_node_role": NODE_ROLE,
         "machine_id": MACHINE_ID,
         "local_ip": get_local_ip(),
@@ -1610,6 +1782,14 @@ def export_results_table_as_image(results, output_path='results_table.png'):
             cell.set_fontsize(14)
             cell.set_text_props(weight='bold')
             cell.set_facecolor('#cccccc')
+    fig.text(
+        0.01,
+        0.01,
+        get_export_branding_line(),
+        ha="left",
+        va="bottom",
+        fontsize=8,
+    )
     plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
     plt.savefig(output_path, bbox_inches='tight', pad_inches=0.1)
     plt.close()
@@ -1653,6 +1833,14 @@ def export_results_table_as_pdf(results, output_path='school_election_results.pd
             cell.set_fontsize(14)
             cell.set_text_props(weight='bold')
             cell.set_facecolor('#cccccc')
+    fig.text(
+        0.01,
+        0.01,
+        get_export_branding_line(),
+        ha="left",
+        va="bottom",
+        fontsize=8,
+    )
     plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
     with PdfPages(output_path) as pdf:
         pdf.savefig(fig, bbox_inches='tight', pad_inches=0.1)
@@ -1691,6 +1879,8 @@ def export_results_table_as_reportlab(results, output_path='results_table.pdf'):
             if y < 40:
                 c.showPage()
                 y = height - 40
+    c.setFont("Helvetica", 8)
+    c.drawString(40, 20, get_export_branding_line())
     c.save()
     print(f'Results exported as table PDF: {output_path}')
 

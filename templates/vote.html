@@ -119,7 +119,7 @@
         <img src="{{ candidate_images[candidate] }}"
              class="vote-photo"
              alt="{{ candidate }}"
-             onerror="this.src='/static/images/contact.png'">
+             onerror="this.src='{{ default_contact_image }}'">
         <div class="card-body text-center">
             <h5 class="card-title text-white text-shadow">{{ candidate }}</h5>
             <form method="POST" action="/vote/{{ post }}">

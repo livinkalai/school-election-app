@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="alert alert-danger shadow-sm">
+            <h3 class="mb-3">License Expired</h3>
+            <p class="mb-2">This copy of the School Election App can no longer run.</p>
+            <p class="mb-2"><strong>Licensed school:</strong> {{ licensed_school }}</p>
+            <p class="mb-2"><strong>First run:</strong> {{ license_first_run_display or license_first_run }}</p>
+            <p class="mb-2"><strong>Expired on:</strong> {{ license_expires_display or license_expires }}</p>
+            {% if developer_contact %}
+            <p class="mb-0"><strong>Contact:</strong> {{ developer_name }} ({{ developer_contact }})</p>
+            {% else %}
+            <p class="mb-0"><strong>Contact:</strong> {{ developer_name }}</p>
+            {% endif %}
+        </div>
+        {% if error_message %}
+        <div class="alert alert-warning">
+            <strong>Details:</strong> {{ error_message }}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
