@@ -21,6 +21,8 @@
         </div>
     </div>
 </div>
+{% elif results_msg == 'primary_required' %}
+<div class="row mb-3"><div class="col-12"><div class="alert alert-warning">App settings and configuration are only available on the <strong>Primary</strong> machine (<code>node_role</code> in config).</div></div></div>
 {% elif results_msg == 'not_primary' %}
 <div class="row mb-3"><div class="col-12"><div class="alert alert-warning">This machine is not configured as Primary (<code>node_role</code>).</div></div></div>
 {% elif results_msg == 'no_secret' %}
@@ -46,9 +48,12 @@
         <a href="/export-results-image" class="btn btn-success me-2">
             Export Results as Image
         </a>
-        <a href="/export-results-pdf" class="btn btn-primary">
+        <a href="/export-results-pdf" class="btn btn-primary me-2">
             Export Results as PDF
         </a>
+        {% if is_primary_node %}
+        <a href="/admin" class="btn btn-outline-light">Admin settings</a>
+        {% endif %}
     </div>
 </div>
 

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <h2 class="text-white text-shadow fw-bold mb-4 text-center">Admin</h2>
+        <p class="text-center text-white-50 small mb-4">Primary machine — configure the election and view results.</p>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <a href="/results" class="card bg-dark bg-opacity-75 border-light text-decoration-none h-100">
+                    <div class="card-body text-center text-white py-4">
+                        <h5 class="fw-bold">View Results</h5>
+                        <p class="small text-white-50 mb-0">See votes and export reports</p>
+                    </div>
+                </a>
+            </div>
+            <div class="col-md-4">
+                <a href="/admin/settings" class="card bg-dark bg-opacity-75 border-light text-decoration-none h-100">
+                    <div class="card-body text-center text-white py-4">
+                        <h5 class="fw-bold">App Settings</h5>
+                        <p class="small text-white-50 mb-0">Password, theme, LAN sync</p>
+                    </div>
+                </a>
+            </div>
+            <div class="col-md-4">
+                <a href="/admin/candidates" class="card bg-dark bg-opacity-75 border-light text-decoration-none h-100">
+                    <div class="card-body text-center text-white py-4">
+                        <h5 class="fw-bold">Posts &amp; Candidates</h5>
+                        <p class="small text-white-50 mb-0">Edit election posts and names</p>
+                    </div>
+                </a>
+            </div>
+        </div>
+        <div class="text-center mt-4">
+            <a href="/admin/lan-monitor" class="btn btn-info">Connected devices (LAN)</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

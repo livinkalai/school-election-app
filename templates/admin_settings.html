@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <h2 class="text-white text-shadow fw-bold mb-3">App Settings</h2>
+        {% if settings_saved %}
+        <div class="alert alert-success">Settings saved. Changes apply immediately.</div>
+        {% endif %}
+        <div class="card bg-dark bg-opacity-75 border-light">
+            <div class="card-body">
+                <form method="post" action="/admin/settings">
+                    <div class="mb-3">
+                        <label for="school_name" class="form-label text-white">School name</label>
+                        <input type="text" class="form-control" id="school_name" name="school_name" value="{{ cfg.school_name }}">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="admin_password" class="form-label text-white">Admin password</label>
+                        <input type="text" class="form-control" id="admin_password" name="admin_password" value="{{ cfg.admin_password }}" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="theme_name" class="form-label text-white">Theme</label>
+                        <select class="form-select" id="theme_name" name="theme_name">
+                            {% for t in themes %}
+                            <option value="{{ t }}" {% if cfg.theme_name == t %}selected{% endif %}>{{ t|title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="logo_url" class="form-label text-white">Logo image path</label>
+                        <input type="text" class="form-control" id="logo_url" name="logo_url" value="{{ cfg.logo_url }}" placeholder="/static/images/school_logo.jpg">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="background_url" class="form-label text-white">Background image path</label>
+                        <input type="text" class="form-control" id="background_url" name="background_url" value="{{ cfg.background_url }}" placeholder="/static/images/school_bg.jpg">
+                        <div class="form-text text-white-50">Place images in <code>static/images/</code> beside the exe, or rebuild the app.</div>
+                    </div>
+
+                    <hr class="border-light">
+                    <h5 class="text-white mb-3">LAN sync (optional)</h5>
+
+                    <div class="mb-3">
+                        <label for="node_role" class="form-label text-white">This laptop role</label>
+                        <select class="form-select" id="node_role" name="node_role">
+                            <option value="primary" {% if cfg.node_role == 'primary' %}selected{% endif %}>Primary (collects votes from others)</option>
+                            <option value="secondary" {% if cfg.node_role != 'primary' %}selected{% endif %}>Secondary (voting laptop)</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="sync_secret" class="form-label text-white">Sync secret</label>
+                        <input type="text" class="form-control" id="sync_secret" name="sync_secret" value="{{ cfg.sync_secret }}" placeholder="Same on all laptops">
+                        <div class="form-text text-white-50">Must match on every machine that syncs over Wi‑Fi.</div>
+                    </div>
+
+                    <div class="form-check mb-4">
+                        <input class="form-check-input" type="checkbox" id="lan_discovery" name="lan_discovery" {% if cfg.lan_discovery %}checked{% endif %}>
+                        <label class="form-check-label text-white" for="lan_discovery">Auto-discover other laptops on LAN</label>
+                    </div>
+
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="submit" class="btn btn-success">Save Settings</button>
+                        <a href="/admin" class="btn btn-outline-light">Back to Admin</a>
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer border-light text-white-50 small">
+                Saved to: <code>{{ settings_path }}</code>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

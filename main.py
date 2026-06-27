@@ -12,7 +12,7 @@ import secrets  # For generating secure random key
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote, unquote
 from fastapi import FastAPI, Request, Form, HTTPException, Response, Header
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -63,25 +63,8 @@ app_id = hashlib.sha256(EXTERNAL_FILES_PATH.encode()).hexdigest()[:10] # Short h
 LOCK_FILE_NAME = f"election_app_{app_id}.lock" # More unique name
 LOCK_FILE_PATH = os.path.join(tempfile.gettempdir(), LOCK_FILE_NAME)
 
-# Define settings / config paths (bundled in exe; optional flat override beside exe in dev)
+# Define settings / config paths (bundled in exe; editable beside exe at runtime)
 SETTINGS_DIR = os.path.join(EXTERNAL_FILES_PATH, "settings")
-
-def resolve_resource_file(filename: str, bundled_alternate_names: Optional[List[str]] = None) -> str:
-    """Find a file: optional override beside exe, then bundled in exe, then dev settings folder."""
-    search: List[str] = [
-        os.path.join(EXTERNAL_FILES_PATH, filename),
-        os.path.join(SETTINGS_DIR, filename),
-    ]
-    for alt in bundled_alternate_names or []:
-        search.append(os.path.join(APPLICATION_PATH, "settings", alt))
-    search.append(os.path.join(APPLICATION_PATH, "settings", filename))
-    for path in search:
-        if os.path.isfile(path):
-            return path
-    return os.path.join(SETTINGS_DIR, filename)
-
-CONFIG_FILE = resolve_resource_file("config.json", ["config.example.json"])
-CANDIDATES_FILE = resolve_resource_file("candidates.json")
 
 # Dev mode: ensure settings directory exists for writable defaults
 if not getattr(sys, "frozen", False) and not os.path.exists(SETTINGS_DIR):
@@ -91,42 +74,82 @@ def generate_secret_key():
     """Generate a secure random secret key."""
     return secrets.token_urlsafe(32)  # 32 bytes = 256 bits of entropy
 
-def load_config():
-    """Load configuration from bundled file, optional override beside exe, or dev settings/."""
+
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "school_name": "Your School Name",
+    "logo_url": "/static/images/school_logo.jpg",
+    "background_url": "/static/images/school_bg.jpg",
+    "admin_username": "admin",
+    "admin_password": "admin123",
+    "theme_name": "primary",
+    "available_themes": [
+        "primary",
+        "secondary",
+        "light",
+        "warning",
+        "info",
+    ],
+    "node_role": "secondary",
+    "sync_secret": "",
+    "machine_id": "",
+    "lan_discovery": True,
+    "lan_scan_cidrs": [],
+}
+
+DEFAULT_CANDIDATES: Dict[str, List[str]] = {
+    "school_people_leader": [],
+    "assistant_school_people_leader": [],
+}
+
+
+def _external_settings_paths(filename: str) -> List[str]:
+    """config.json / candidates.json beside exe: flat file, then settings/ subfolder."""
+    flat = os.path.join(EXTERNAL_FILES_PATH, filename)
+    settings = os.path.join(SETTINGS_DIR, filename)
+    paths: List[str] = []
+    for path in (flat, settings):
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def _load_json_object(path: str) -> Optional[Dict[str, Any]]:
     try:
-        with open(CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-            return config
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
     except FileNotFoundError:
-        if getattr(sys, "frozen", False):
-            raise Exception(
-                "Configuration missing from application bundle. Rebuild the exe with settings/config.example.json."
-            )
-        default_config = {
-            "school_name": "Your School Name",
-            "logo_url": "/static/images/school_logo.svg",
-            "background_url": "/static/images/school_bg.jpg",
-            "admin_username": "admin",
-            "admin_password": "admin123",
-            "theme_name": "primary",
-            "available_themes": [
-                "primary",
-                "secondary",
-                "light",
-                "warning",
-                "info"
-            ],
-            "node_role": "secondary",
-            "sync_secret": "",
-            "machine_id": "",
-            "lan_discovery": True,
-            "lan_scan_cidrs": [],
-        }
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(default_config, f, indent=4)
-        return default_config
+        return None
     except json.JSONDecodeError:
-        raise Exception(f"Invalid config file: {CONFIG_FILE}")
+        raise Exception(f"Invalid JSON file: {path}")
+
+
+def _create_external_settings(filename: str, data: Any) -> str:
+    """Create settings/<filename> beside the exe with default or bundled values."""
+    os.makedirs(SETTINGS_DIR, exist_ok=True)
+    settings_path = os.path.join(SETTINGS_DIR, filename)
+    with open(settings_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+    return settings_path
+
+
+def _bundled_settings_path(filename: str) -> str:
+    return os.path.join(APPLICATION_PATH, "settings", filename)
+
+
+def load_config():
+    """Load config.json beside the exe; create settings/config.json with defaults if missing."""
+    for path in _external_settings_paths("config.json"):
+        if not os.path.isfile(path):
+            continue
+        cfg = _load_json_object(path)
+        if cfg is not None:
+            return cfg
+
+    bundled = _load_json_object(_bundled_settings_path("config.json"))
+    cfg = dict(bundled if bundled is not None else DEFAULT_CONFIG)
+    _create_external_settings("config.json", cfg)
+    return cfg
 
 def apply_sync_defaults(cfg: dict) -> None:
     """Ensure LAN sync keys exist (defaults: secondary, discovery on, empty secret)."""
@@ -141,36 +164,184 @@ def apply_sync_defaults(cfg: dict) -> None:
         if k not in cfg:
             cfg[k] = v
 
-def load_candidates() -> Dict[str, List[str]]:
-    """Load candidates from bundled file, optional override beside exe, or dev settings/."""
+def normalize_candidate_names(cands: Any) -> List[str]:
+    """Ensure post candidates are a list of names (not a string split per character)."""
+    if isinstance(cands, list):
+        return [str(c).strip() for c in cands if str(c).strip()]
+    if isinstance(cands, str):
+        lines = [line.strip() for line in cands.splitlines() if line.strip()]
+        if lines:
+            return lines
+        s = cands.strip()
+        return [s] if s else []
+    return []
+
+
+def _read_candidates_dict(path: str) -> Dict[str, List[str]]:
     try:
-        with open(CANDIDATES_FILE, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        if getattr(sys, "frozen", False):
-            raise Exception(
-                "Candidates missing from application bundle. Rebuild the exe with settings/candidates.json."
-            )
-        default_candidates = {
-            "school_people_leader": [],
-            "assistant_school_people_leader": []
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(post).strip(): normalize_candidate_names(cands)
+            for post, cands in raw.items()
+            if str(post).strip()
         }
-        with open(CANDIDATES_FILE, 'w') as f:
-            json.dump(default_candidates, f, indent=4)
-        return default_candidates
-    except json.JSONDecodeError:
-        raise Exception(f"Invalid candidates file: {CANDIDATES_FILE}")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _is_placeholder_candidates(data: Dict[str, List[str]]) -> bool:
+    """Ignore accidental saves of only an empty 'New Post' stub."""
+    return len(data) == 1 and "New Post" in data and not data.get("New Post")
+
+
+def _normalize_candidates_raw(raw: Any) -> Dict[str, List[str]]:
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(post).strip(): normalize_candidate_names(cands)
+        for post, cands in raw.items()
+        if str(post).strip()
+    }
+
+
+def load_candidates() -> Dict[str, List[str]]:
+    """Load candidates.json beside the exe; create settings/candidates.json with defaults if missing."""
+    for path in _external_settings_paths("candidates.json"):
+        if not os.path.isfile(path):
+            continue
+        data = _read_candidates_dict(path)
+        if data and not _is_placeholder_candidates(data):
+            return data
+        if os.path.isfile(path):
+            _load_json_object(path)
+
+    bundled = _load_json_object(_bundled_settings_path("candidates.json"))
+    raw: Dict[str, Any] = dict(bundled if bundled is not None else DEFAULT_CANDIDATES)
+    _create_external_settings("candidates.json", raw)
+    return _normalize_candidates_raw(raw)
+
+
+def writable_settings_file(filename: str) -> str:
+    """Path to save settings beside the exe (creates settings/ if needed)."""
+    flat = os.path.join(EXTERNAL_FILES_PATH, filename)
+    if os.path.isfile(flat):
+        return flat
+    os.makedirs(SETTINGS_DIR, exist_ok=True)
+    return os.path.join(SETTINGS_DIR, filename)
+
+
+def save_json_file(path: str, data: Any) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def reload_runtime_config(cfg: dict) -> None:
+    """Apply saved config to in-memory settings (no restart required)."""
+    global config, THEME_NAME, ADMIN_USERNAME, ADMIN_PASSWORD, SCHOOL_NAME
+    global LOGO_URL, BACKGROUND_URL, MACHINE_ID, NODE_ROLE, SYNC_SECRET
+    global LAN_DISCOVERY, LAN_SCAN_CIDRS, _raw_node_role
+
+    apply_sync_defaults(cfg)
+
+    config.clear()
+    config.update(cfg)
+
+    THEME_NAME = config.get("theme_name", "primary")
+    ADMIN_USERNAME = config.get("admin_username", "admin")
+    ADMIN_PASSWORD = config.get("admin_password", "admin123")
+    SCHOOL_NAME = config.get("school_name", "Your School Name")
+    LOGO_URL = static_url_with_version(config.get("logo_url", ""))
+    BACKGROUND_URL = static_url_with_version(config.get("background_url", ""))
+    MACHINE_ID = (config.get("machine_id") or "").strip() or socket.gethostname()
+    _raw_node_role = (config.get("node_role") or "secondary").strip().lower()
+    NODE_ROLE = "primary" if _raw_node_role == "primary" else "secondary"
+    SYNC_SECRET = (config.get("sync_secret") or "").strip()
+    LAN_DISCOVERY = bool(config.get("lan_discovery", True))
+    LAN_SCAN_CIDRS = [str(c).strip() for c in (config.get("lan_scan_cidrs") or []) if str(c).strip()]
+
+
+def admin_redirect_if_needed(request: Request) -> Optional[RedirectResponse]:
+    data = parse_session_data(request.cookies.get("session"))
+    if not data or not session_is_admin(data):
+        next_path = request.url.path
+        if request.url.query:
+            next_path = f"{next_path}?{request.url.query}"
+        return RedirectResponse(
+            url=f"/admin-login?next={quote(next_path, safe='')}",
+            status_code=303,
+        )
+    return None
+
+
+def safe_admin_next(raw: Optional[str]) -> str:
+    """Only allow redirects to admin/results pages after login."""
+    path = (raw or "").strip()
+    if not path.startswith("/"):
+        return "/admin" if NODE_ROLE == "primary" else "/results"
+    base = path.split("?", 1)[0]
+    if NODE_ROLE != "primary" and is_primary_only_admin_path(base):
+        return "/results"
+    if base == "/admin" and NODE_ROLE != "primary":
+        return "/results"
+    if base in ("/admin", "/results") or base.startswith("/admin/"):
+        return path
+    return "/admin" if NODE_ROLE == "primary" else "/results"
+
+
+def is_primary_only_admin_path(path: str) -> bool:
+    """Configuration pages only available on the primary node."""
+    base = path.split("?", 1)[0]
+    if base in ("/admin/settings", "/license-status"):
+        return True
+    if base.startswith("/admin/candidates"):
+        return True
+    if base.startswith("/admin/lan-monitor"):
+        return True
+    if base == "/admin/collect-now":
+        return True
+    return False
+
+
+def admin_primary_redirect_if_needed(request: Request) -> Optional[RedirectResponse]:
+    """Require admin login and primary node for configuration routes."""
+    denied = admin_redirect_if_needed(request)
+    if denied:
+        return denied
+    if NODE_ROLE != "primary" and is_primary_only_admin_path(request.url.path):
+        return RedirectResponse(url="/results?msg=primary_required", status_code=303)
+    return None
+
+
+def is_admin_only_path(path: str) -> bool:
+    if path in ("/results", "/shutdown", "/license-status"):
+        return True
+    if path == "/admin" or path.startswith("/admin/"):
+        return True
+    if path.startswith("/export-results"):
+        return True
+    return False
+
+
+def admin_page_context(request: Request, **extra: Any) -> dict:
+    return {
+        "request": request,
+        "school_name": SCHOOL_NAME,
+        "logo_url": LOGO_URL,
+        "theme_name": THEME_NAME,
+        "background_url": BACKGROUND_URL,
+        **session_template_vars(request),
+        **extra,
+    }
 
 # Load configuration
 config = load_config()
 apply_sync_defaults(config)
-
-# In frozen deployments, school identity is license-controlled.
-if getattr(sys, "frozen", False):
-    status = get_license_status()
-    licensed_school_name = str(status.get("school_name") or "").strip()
-    if licensed_school_name:
-        config["school_name"] = licensed_school_name
 
 # Generate a secure secret key for session management
 SECRET_KEY = generate_secret_key()
@@ -196,18 +367,17 @@ def session_template_vars(request: Request) -> dict:
     data = parse_session_data(request.cookies.get("session"))
     license_ctx = get_license_template_context()
     branding = branding_static_urls()
-    if not data:
-        return {
-            "is_admin": False,
-            "is_primary_node": NODE_ROLE == "primary",
-            **branding,
-            **license_ctx,
-        }
-    return {
-        "is_admin": data.get("is_admin") is True,
+    base = {
         "is_primary_node": NODE_ROLE == "primary",
         **branding,
         **license_ctx,
+    }
+    if not data:
+        return {**base, "is_admin": False, "is_student": False}
+    return {
+        **base,
+        "is_admin": data.get("is_admin") is True,
+        "is_student": data.get("is_student") is True and not data.get("is_admin"),
     }
 
 # Get theme settings from config
@@ -277,7 +447,7 @@ def static_url_with_version(url: str) -> str:
     if not url or not url.startswith("/static/"):
         return url
     base_url, _, _ = url.partition("?")
-    rel = base_url[len("/static/"):].lstrip("/").replace("/", os.sep)
+    rel = unquote(base_url[len("/static/"):].lstrip("/")).replace("/", os.sep)
     for base in (STATIC_DIR_PATH, BUNDLED_STATIC_DIR):
         path = os.path.join(base, rel)
         if os.path.isfile(path):
@@ -336,10 +506,9 @@ def _lan_request_kwargs(timeout: float) -> Dict[str, Any]:
 
 def get_export_branding_line() -> str:
     status = get_license_status()
-    school = status.get("school_name") or SCHOOL_NAME
     developer = status.get("developer_name") or "EmpowerID"
     expires = status.get("expires_at") or "N/A"
-    return f"Licensed to {school} | Valid until {expires} | Developed by {developer}"
+    return f"Licensed to {SCHOOL_NAME} | Valid until {expires} | Developed by {developer}"
 
 
 def ensure_primary_node_or_forbidden() -> None:
@@ -370,6 +539,24 @@ async def license_enforcement_middleware(request: Request, call_next):
             status_code=403,
         )
     return await call_next(request)
+
+
+@app.middleware("http")
+async def admin_area_auth_middleware(request: Request, call_next):
+    """Require admin login for /admin and all /admin/* pages (settings, candidates, LAN)."""
+    path = request.url.path
+    if is_admin_only_path(path):
+        data = parse_session_data(request.cookies.get("session"))
+        if not data or not session_is_admin(data):
+            next_path = path
+            if request.url.query:
+                next_path = f"{path}?{request.url.query}"
+            return RedirectResponse(
+                url=f"/admin-login?next={quote(next_path, safe='')}",
+                status_code=303,
+            )
+    return await call_next(request)
+
 
 def get_local_ipv4_addresses() -> List[str]:
     """IPv4 addresses for this machine (excludes loopback). No DNS or internet required."""
@@ -1001,11 +1188,11 @@ def sort_results_for_display(results: Dict[str, Dict[str, int]]) -> Dict[str, Li
 
 def get_candidate_image(candidate_name: str) -> str:
     """Get the path to a candidate's image, or return default if not found."""
-    candidate_image = os.path.join("candidates", f"{candidate_name}.png")
-    candidate_image_path = os.path.join(STATIC_CANDIDATES_PATH, f"{candidate_name}.png")
+    filename = f"{candidate_name}.png"
+    candidate_image_path = os.path.join(STATIC_CANDIDATES_PATH, filename)
 
     if os.path.exists(candidate_image_path):
-        return static_url_with_version(f"/static/images/{candidate_image}")
+        return static_url_with_version(f"/static/images/candidates/{quote(filename)}")
 
     return static_url_with_version("/static/images/contact.png")
 
@@ -1370,7 +1557,7 @@ async def admin_collect_now(request: Request):
     except Exception:
         return RedirectResponse(url="/", status_code=303)
     if NODE_ROLE != "primary":
-        raise HTTPException(status_code=403, detail="Primary node required.")
+        return RedirectResponse(url="/results?msg=primary_required", status_code=303)
     if not SYNC_SECRET:
         return RedirectResponse(url="/results?msg=no_secret", status_code=303)
     # Prefer known peers (no subnet scan). If none yet, use cached LAN discovery once.
@@ -1392,37 +1579,184 @@ async def startup_pending_sync():
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """Show home page with Admin/Student buttons."""
-    return templates.TemplateResponse("index.html", {
+    """Show home page with Admin/Student buttons. Clears any prior session."""
+    response = templates.TemplateResponse("index.html", {
         "request": request,
         "school_name": SCHOOL_NAME,
         "logo_url": LOGO_URL,
         "theme_name": THEME_NAME,
         "background_url": BACKGROUND_URL,
         **session_template_vars(request),
+        "is_admin": False,
+        "is_student": False,
     })
+    response.delete_cookie("session")
+    return response
 
 @app.get("/admin-login", response_class=HTMLResponse)
 async def admin_login_page(request: Request):
     """Show admin login page."""
+    data = parse_session_data(request.cookies.get("session"))
+    if session_is_admin(data):
+        return RedirectResponse(url=safe_admin_next(request.query_params.get("next")), status_code=303)
     return templates.TemplateResponse("admin_login.html", {
         "request": request,
         "school_name": SCHOOL_NAME,
         "logo_url": LOGO_URL,
         "theme_name": THEME_NAME,
         "background_url": BACKGROUND_URL,
+        "login_next": safe_admin_next(request.query_params.get("next")),
         **session_template_vars(request),
+        "is_admin": False,
+        "is_student": False,
     })
 
 @app.post("/admin-login")
-async def admin_login(request: Request, password: str = Form(...)):
+async def admin_login(request: Request, password: str = Form(...), next: str = Form("/admin")):
     """Handle admin login."""
     if password == ADMIN_PASSWORD:
         session_data = serializer.dumps({"is_admin": True})
-        response = RedirectResponse(url="/results", status_code=303)
+        response = RedirectResponse(url=safe_admin_next(next), status_code=303)
         response.set_cookie(key="session", value=session_data)
         return response
-    return RedirectResponse(url="/admin-login?error=1", status_code=303)
+    err_url = "/admin-login?error=1"
+    safe_next = safe_admin_next(next)
+    if safe_next != "/admin":
+        err_url = f"{err_url}&next={quote(safe_next, safe='')}"
+    return RedirectResponse(url=err_url, status_code=303)
+
+
+@app.get("/admin-logout")
+async def admin_logout():
+    response = RedirectResponse(url="/", status_code=303)
+    response.delete_cookie("session")
+    return response
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_home(request: Request):
+    denied = admin_redirect_if_needed(request)
+    if denied:
+        return denied
+    if NODE_ROLE != "primary":
+        return RedirectResponse(url="/results", status_code=303)
+    return templates.TemplateResponse("admin_home.html", admin_page_context(request))
+
+
+@app.get("/admin/settings", response_class=HTMLResponse)
+async def admin_settings_page(request: Request):
+    denied = admin_primary_redirect_if_needed(request)
+    if denied:
+        return denied
+    cfg = dict(config)
+    themes = cfg.get("available_themes") or ["primary", "secondary", "light", "warning", "info"]
+    saved = request.query_params.get("saved") == "1"
+    return templates.TemplateResponse(
+        "admin_settings.html",
+        admin_page_context(
+            request,
+            cfg=cfg,
+            themes=themes,
+            settings_saved=saved,
+            settings_path=writable_settings_file("config.json"),
+        ),
+    )
+
+
+@app.post("/admin/settings")
+async def admin_settings_save(
+    request: Request,
+    admin_password: str = Form(...),
+    theme_name: str = Form("primary"),
+    logo_url: str = Form(""),
+    background_url: str = Form(""),
+    node_role: str = Form("secondary"),
+    sync_secret: str = Form(""),
+    lan_discovery: Optional[str] = Form(None),
+    school_name: str = Form(""),
+):
+    denied = admin_primary_redirect_if_needed(request)
+    if denied:
+        return denied
+
+    cfg = dict(config)
+    if school_name.strip():
+        cfg["school_name"] = school_name.strip()
+    cfg["admin_password"] = admin_password
+    cfg["theme_name"] = theme_name if theme_name in (cfg.get("available_themes") or []) else cfg.get("theme_name", "primary")
+    cfg["logo_url"] = logo_url.strip()
+    cfg["background_url"] = background_url.strip()
+    cfg["node_role"] = "primary" if node_role.strip().lower() == "primary" else "secondary"
+    cfg["sync_secret"] = sync_secret.strip()
+    cfg["lan_discovery"] = lan_discovery == "on"
+
+    save_json_file(writable_settings_file("config.json"), cfg)
+    reload_runtime_config(cfg)
+    return RedirectResponse(url="/admin/settings?saved=1", status_code=303)
+
+
+@app.get("/admin/candidates", response_class=HTMLResponse)
+async def admin_candidates_page(request: Request):
+    denied = admin_primary_redirect_if_needed(request)
+    if denied:
+        return denied
+    posts = load_candidates()
+    initial_candidates = {
+        name: normalize_candidate_names(cands) for name, cands in posts.items()
+    }
+    saved = request.query_params.get("saved") == "1"
+    invalid = request.query_params.get("error") == "invalid"
+    return templates.TemplateResponse(
+        "admin_candidates.html",
+        admin_page_context(
+            request,
+            initial_candidates_json=json.dumps(initial_candidates, ensure_ascii=False),
+            candidates_saved=saved,
+            candidates_error=invalid,
+            settings_path=writable_settings_file("candidates.json"),
+        ),
+    )
+
+
+@app.post("/admin/candidates")
+async def admin_candidates_save(request: Request):
+    denied = admin_primary_redirect_if_needed(request)
+    if denied:
+        return denied
+
+    form = await request.form()
+    posts: Dict[str, List[str]] = {}
+
+    payload = str(form.get("candidates_payload") or "").strip()
+    if payload:
+        try:
+            raw = json.loads(payload)
+            if isinstance(raw, dict):
+                for post_name, names in raw.items():
+                    title = str(post_name or "").strip()
+                    if not title or not isinstance(names, list):
+                        continue
+                    posts[title] = normalize_candidate_names(names)
+        except json.JSONDecodeError:
+            return RedirectResponse(url="/admin/candidates?error=invalid", status_code=303)
+    else:
+        idx = 0
+        while f"post_name_{idx}" in form:
+            if form.get(f"delete_{idx}") != "on":
+                name = str(form.get(f"post_name_{idx}") or "").strip()
+                raw = str(form.get(f"candidates_{idx}") or "")
+                names = [line.strip() for line in raw.splitlines() if line.strip()]
+                if name:
+                    posts[name] = names
+            idx += 1
+        new_name = str(form.get("new_post_name") or "").strip()
+        if new_name:
+            raw = str(form.get("new_candidates") or "")
+            names = [line.strip() for line in raw.splitlines() if line.strip()]
+            posts[new_name] = names
+
+    save_json_file(writable_settings_file("candidates.json"), posts)
+    return RedirectResponse(url="/admin/candidates?saved=1", status_code=303)
 
 @app.get("/student-voting", response_class=HTMLResponse)
 async def student_voting(request: Request):
@@ -1651,6 +1985,9 @@ async def license_status_page(request: Request):
     except Exception:
         return RedirectResponse(url="/", status_code=303)
 
+    if NODE_ROLE != "primary":
+        return RedirectResponse(url="/results?msg=primary_required", status_code=303)
+
     return templates.TemplateResponse(
         "license_status.html",
         {
@@ -1667,17 +2004,9 @@ async def license_status_page(request: Request):
 @app.get("/admin/lan-monitor", response_class=HTMLResponse)
 async def admin_lan_monitor(request: Request):
     """Admin dashboard: LAN peers, online status, last collect/push times."""
-    session = request.cookies.get("session")
-    if not session:
-        return RedirectResponse(url="/", status_code=303)
-    try:
-        data = serializer.loads(session)
-        if not session_is_admin(data):
-            return RedirectResponse(url="/", status_code=303)
-    except Exception:
-        return RedirectResponse(url="/", status_code=303)
-
-    ensure_primary_node_or_forbidden()
+    denied = admin_primary_redirect_if_needed(request)
+    if denied:
+        return denied
     scan = request.query_params.get("scan") == "1"
     bases = get_monitored_secondary_bases(scan)
     rows = build_secondary_monitor_rows(bases)

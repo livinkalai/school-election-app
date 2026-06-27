@@ -36,7 +36,11 @@ if ($DeveloperContact) {
 & $pythonExe @licenseArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host "Building executable (edit settings/config.example.json and settings/candidates.json before this)..."
+if (-not (Test-Path "$root\settings\config.json")) {
+    throw "settings/config.json not found. Create it before building the exe."
+}
+
+Write-Host "Building executable (edit settings/config.json and settings/candidates.json before this)..."
 & $pythonExe -m PyInstaller --noconfirm school-election-app.spec
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -52,5 +56,5 @@ Write-Host ""
 Write-Host "Copy the exe to each client laptop. No static or settings folders needed."
 Write-Host "votes.xlsx is created beside the exe on first vote."
 Write-Host ""
-Write-Host "Optional: put config.json beside the exe to override node_role / sync_secret / admin password on that machine."
+Write-Host "Optional: put config.json or settings/config.json beside the exe to change school name, node_role, sync_secret, admin password, or candidates on that machine."
 Write-Host "License embedded for school: $SchoolName (valid $ValidDays days from first launch per laptop)."

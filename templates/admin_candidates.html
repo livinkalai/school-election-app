@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  .candidates-editor .editor-panel {
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 8px;
+    padding: 1.25rem;
+  }
+  .candidates-editor .candidate-table th,
+  .candidates-editor .candidate-table td {
+    vertical-align: middle;
+  }
+  .candidates-editor .candidate-table input {
+    min-width: 14rem;
+  }
+  .candidates-editor .row-num {
+    width: 3rem;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.65);
+  }
+  .candidates-editor .post-select {
+    min-width: 16rem;
+    max-width: 100%;
+  }
+</style>
+
+<div class="row justify-content-center candidates-editor">
+    <div class="col-lg-10">
+        <h2 class="text-white text-shadow fw-bold mb-3">Posts &amp; Candidates</h2>
+        {% if candidates_saved %}
+        <div class="alert alert-success">Candidates saved. Students will see the updated list on the next vote.</div>
+        {% endif %}
+        {% if candidates_error %}
+        <div class="alert alert-danger">Could not save — please try again.</div>
+        {% endif %}
+        <p class="text-white text-shadow small mb-3">
+            Select a post, edit candidates in the table, then click <strong>Save Candidates</strong>.
+            Optional photo: <code>static/images/candidates/Name.png</code>
+        </p>
+
+        <form method="post" action="/admin/candidates" id="candidates-form">
+            <input type="hidden" name="candidates_payload" id="candidates_payload">
+
+            <div class="editor-panel mb-3">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-5">
+                        <label for="post-select" class="form-label text-white fw-semibold">Post</label>
+                        <select id="post-select" class="form-select post-select"></select>
+                    </div>
+                    <div class="col-md-7 d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-outline-info" id="btn-add-post">+ Add post</button>
+                        <button type="button" class="btn btn-outline-danger" id="btn-remove-post">Remove post</button>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <label for="post-name-edit" class="form-label text-white-50 small mb-1">Rename selected post</label>
+                    <input type="text" id="post-name-edit" class="form-control form-control-sm" style="max-width: 28rem;" placeholder="Post name">
+                </div>
+            </div>
+
+            <div class="editor-panel mb-3">
+                <div class="table-responsive">
+                    <table class="table table-dark table-bordered table-sm candidate-table mb-2">
+                        <thead>
+                            <tr>
+                                <th class="row-num">#</th>
+                                <th>Candidate name</th>
+                                <th style="width: 7rem;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="candidate-body"></tbody>
+                    </table>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-light" id="btn-add-candidate">+ Add candidate</button>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <button type="submit" class="btn btn-success">Save Candidates</button>
+                <a href="/admin" class="btn btn-outline-light">Back to Admin</a>
+            </div>
+        </form>
+
+        <p class="text-white-50 small">Saved to: <code>{{ settings_path }}</code></p>
+    </div>
+</div>
+
+<script id="initial-candidates" type="application/json">{{ initial_candidates_json | safe }}</script>
+
+<template id="candidate-row-template">
+    <tr data-candidate-row>
+        <td class="row-num" data-row-num></td>
+        <td>
+            <input type="text" class="form-control form-control-sm candidate-name-input" placeholder="Candidate name">
+        </td>
+        <td>
+            <button type="button" class="btn btn-sm btn-outline-warning btn-row-action btn-remove-candidate">Remove</button>
+        </td>
+    </tr>
+</template>
+
+<script>
+(function () {
+    const initialEl = document.getElementById('initial-candidates');
+    let postsData = {};
+    try {
+        postsData = JSON.parse(initialEl.textContent || '{}');
+        if (!postsData || typeof postsData !== 'object' || Array.isArray(postsData)) {
+            postsData = {};
+        }
+    } catch (err) {
+        postsData = {};
+    }
+    const postSelect = document.getElementById('post-select');
+    const postNameEdit = document.getElementById('post-name-edit');
+    const candidateBody = document.getElementById('candidate-body');
+    const candidateRowTpl = document.getElementById('candidate-row-template');
+    const form = document.getElementById('candidates-form');
+    const payloadInput = document.getElementById('candidates_payload');
+
+    let selectedKey = '';
+
+    function renumberRows() {
+        candidateBody.querySelectorAll('[data-candidate-row]').forEach(function (row, i) {
+            const cell = row.querySelector('[data-row-num]');
+            if (cell) cell.textContent = String(i + 1);
+        });
+    }
+
+    function readTableCandidates() {
+        const names = [];
+        candidateBody.querySelectorAll('.candidate-name-input').forEach(function (input) {
+            const n = (input.value || '').trim();
+            if (n) names.push(n);
+        });
+        return names;
+    }
+
+    function saveCurrentPostToMemory() {
+        if (!selectedKey) return;
+        postsData[selectedKey] = readTableCandidates();
+    }
+
+    function addCandidateRow(name) {
+        const row = candidateRowTpl.content.firstElementChild.cloneNode(true);
+        if (name) {
+            const input = row.querySelector('.candidate-name-input');
+            if (input) input.value = name;
+        }
+        candidateBody.appendChild(row);
+        renumberRows();
+    }
+
+    function renderCandidateTable(candidates) {
+        candidateBody.innerHTML = '';
+        const list = candidates && candidates.length ? candidates : [''];
+        list.forEach(function (c) { addCandidateRow(c); });
+    }
+
+    function refreshPostSelect(preferKey) {
+        const keys = Object.keys(postsData);
+        postSelect.innerHTML = '';
+        keys.forEach(function (key) {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = key;
+            postSelect.appendChild(opt);
+        });
+        if (preferKey && postsData[preferKey]) {
+            selectedKey = preferKey;
+        } else if (selectedKey && postsData[selectedKey]) {
+            /* keep */
+        } else {
+            selectedKey = keys[0] || '';
+        }
+        postSelect.value = selectedKey;
+        postNameEdit.value = selectedKey;
+        renderCandidateTable(postsData[selectedKey] || []);
+        postSelect.disabled = keys.length === 0;
+        postNameEdit.disabled = keys.length === 0;
+    }
+
+    function uniquePostName(base) {
+        let name = base;
+        let n = 2;
+        while (postsData[name]) {
+            name = base + ' (' + n + ')';
+            n += 1;
+        }
+        return name;
+    }
+
+    postSelect.addEventListener('change', function () {
+        saveCurrentPostToMemory();
+        selectedKey = postSelect.value;
+        postNameEdit.value = selectedKey;
+        renderCandidateTable(postsData[selectedKey] || []);
+    });
+
+    postNameEdit.addEventListener('change', function () {
+        const newName = (postNameEdit.value || '').trim();
+        if (!selectedKey || !newName || newName === selectedKey) {
+            postNameEdit.value = selectedKey;
+            return;
+        }
+        if (postsData[newName]) {
+            alert('A post with that name already exists.');
+            postNameEdit.value = selectedKey;
+            return;
+        }
+        saveCurrentPostToMemory();
+        postsData[newName] = postsData[selectedKey];
+        delete postsData[selectedKey];
+        refreshPostSelect(newName);
+    });
+
+    document.getElementById('btn-add-post').addEventListener('click', function () {
+        saveCurrentPostToMemory();
+        const label = prompt('New post name:');
+        if (!label) return;
+        const name = uniquePostName(label.trim());
+        if (!name) return;
+        postsData[name] = [''];
+        refreshPostSelect(name);
+        postNameEdit.focus();
+        postNameEdit.select();
+    });
+
+    document.getElementById('btn-remove-post').addEventListener('click', function () {
+        if (!selectedKey) return;
+        if (!confirm('Remove "' + selectedKey + '" and all its candidates?')) return;
+        delete postsData[selectedKey];
+        selectedKey = '';
+        refreshPostSelect();
+    });
+
+    document.getElementById('btn-add-candidate').addEventListener('click', function () {
+        addCandidateRow('');
+        const inputs = candidateBody.querySelectorAll('.candidate-name-input');
+        const last = inputs[inputs.length - 1];
+        if (last) last.focus();
+    });
+
+    candidateBody.addEventListener('click', function (e) {
+        const btn = e.target.closest('.btn-remove-candidate');
+        if (!btn) return;
+        const rows = candidateBody.querySelectorAll('[data-candidate-row]');
+        if (rows.length <= 1) {
+            const input = rows[0].querySelector('.candidate-name-input');
+            if (input) input.value = '';
+            return;
+        }
+        btn.closest('[data-candidate-row]').remove();
+        renumberRows();
+    });
+
+    form.addEventListener('submit', function (e) {
+        saveCurrentPostToMemory();
+        const keys = Object.keys(postsData);
+        if (!keys.length) {
+            e.preventDefault();
+            alert('Add at least one post.');
+            return;
+        }
+        for (const key of keys) {
+            if (!key.trim()) {
+                e.preventDefault();
+                alert('Every post needs a name.');
+                return;
+            }
+        }
+        payloadInput.value = JSON.stringify(postsData);
+    });
+
+    if (!Object.keys(postsData).length) {
+        postsData['New Post'] = [''];
+    }
+    refreshPostSelect();
+})();
+</script>
+{% endblock %}

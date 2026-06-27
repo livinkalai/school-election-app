@@ -1,0 +1,1 @@
+C:\Users\Admin\AppData\Local\Programs\Python\Python311\python.exe: can't open file 'D:\\Backup\\Learn\\AI\\ElectionApp\\School Election App - Src\\settings\\_run_candidates_temp.py': [Errno 2] No such file or directory

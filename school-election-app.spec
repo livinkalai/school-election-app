@@ -9,7 +9,7 @@ a = Analysis(
     datas=[
         ('templates', 'templates'),
         ('static', 'static'),
-        ('settings/config.example.json', 'settings'),
+        ('settings/config.json', 'settings'),
         ('settings/candidates.json', 'settings'),
         ('build/license_embed.py', 'build'),
     ],

@@ -1,10 +1,28 @@
 {
+	"School Pupil Leader (Boys)": [
+		"R A SUJITH SHIVARAM (A1)",
+		"SARAN N (A6)",
+		"PRAVEEN (A6)",
+		"MANGALESH B (A8)",
+		"Prasath.P.E XI",
+		"Hemavathi IX"
+	],
+	"School Pupil Leader (Girls)": [
+		"SAWMYA GUPTA (A8)",
+		"HARSHITA (A4)",
+		"KANISHKA P K (A1)",
+		"AMIZHTHINI A (A1)",
+		"Sri Priya XI",
+		"Tejasini.S",
+		"Jai Rakshan IX",
+		"Nithya Jency XI"
+	],
 	"TOPAZ CAPTAIN": [
 		"NEELESHAN K (A4)",
 		"VIJAYA RAGAVAN R (A2)",
 		"NISHAN ASVANTHA G (A2)",
 		"SHATHANAA I V (A5)",
-		"SARAN N(A6)",
+		"SARAN N (A6)",
 		"RATHEESAN. B (A6)",
 		"KAVINYA SRI C (A6)",
 		"VARSHA (A6)",
@@ -12,7 +30,12 @@
 		"MIRUTHUN JAYAN T (A6)",
 		"MOHIT G (A6)",
 		"YAAHUL RANDIARAJ P (A6)",
-		"SANJAY V (A8)"
+		"SANJAY V (A8)",
+		"Karthick.D XI",
+		"Karthick.D-1 XI",
+		"Shamisha IX",
+		"Elango XI",
+		"Alagar.K IX"
 	],
 	"RUBY CAPTAIN": [
 		"VAIBHAV M (A4)",
@@ -30,7 +53,8 @@
 		"KALPANA SRI R (A6)",
 		"SRINITHI V (A6)",
 		"AJAY KUMAR S (A8)",
-		"VISHWA RUBAN.S (A6)"
+		"Rishika XI",
+		"Mathivathani IX"
 	],
 	"EMERALD CAPTAIN": [
 		"MUKESH B (A4)",
@@ -46,7 +70,9 @@
 		"PRANEETH P (A6)",
 		"KARTHI K (A6)",
 		"VISHAL A (A8)",
-		"AKSHAYAA V (A9)"
+		"AKSHAYAA V (A9)",
+		"Satheesh Kumar IX",
+		"Priyanga XI"
 	],
 	"SAPPHIRE CAPTAIN": [
 		"ATHMIKA K (A5)",
@@ -58,39 +84,35 @@
 		"DEVANATH T K (A6)",
 		"JOSHUA NITHIN R(A6)",
 		"PRANAV NITHILAN S.A (A8)",
-		"JASSIKA SRI T (A9)"
-	],
-	"School Pupil Leader (Boys)": [
-		"R A SUJITH SHIVARAM (A1)",
-		"SARAN N (A6)",
-		"PRAVEEN (A6)",
-		"MANGALESH B (A8)"
-	],
-	"School Pupil Leader (Girls)": [
-		"SAWMYA GUPTA (A8)",
-		"HARSHITA (A4)",
-		"KANISHKA P K (A1)",
-		"AMIZHTHINI A (A1)"
+		"JASSIKA SRI T (A9)",
+		"Chandrasekaran.S XI",
+		"Suresh Aps XI"
 	],
 	"Cultural captain (Boys)": [
 		"MOHAMED SUHAIL S (A4)",
-		"RAGHAV RAM M (A8)"
+		"RAGHAV RAM M (A8)",
+		"Balamurugan IX",
+		"Aswanth Karthi IX"
 	],
 	"Cultural captain (Girls)": [
-		"V ANANYA (A1) ",
+		"V ANANYA (A1)",
 		"MAGHEEDARA J (A4)",
 		"RIDANYA B (A4)",
 		"JAI AKHITHA K (A9)",
 		"PRADHIKSHA S (A1)",
 		"SRIMATHI A (A5)",
-		"EBINITHA R (A9)"
+		"EBINITHA R (A9)",
+		"Hanifa XI",
+		"RIYA RS -VIII "
 	],
 	"Sports captain": [
 		"BRIAN OSWALD J (A2)",
 		"CHAKRAVARTHY (A8)",
 		"BENEDICT IMMANUEL M (A8)",
 		"PRAGEETHA R (A5)",
-		"ROSHINI (A8)"
+		"ROSHINI (A8)",
+		"Gritharan XI",
+		"Dharshini XI"
 	],
 	"Vice Captain Topaz (Boys)": [
 		"JEGATH KISORE. K",
@@ -98,7 +120,9 @@
 		"SANTHOSH KUMAR",
 		"SRIRAM. S",
 		"PRAJIN.M",
-		"NAGAPRAVEEN. V"
+		"NAGAPRAVEEN. V",
+		"Kanchana IX",
+		"Dhiyashini IX"
 	],
 	"Vice Captain Topaz (Girls)": [
 		"DHARSSHWANA.M",
@@ -107,7 +131,9 @@
 		"PRATHIKSHA .D",
 		"SHREYOGHASWITHA",
 		"MADHU DESHINI.S",
-		"DELCINA YAZHINI. R"
+		"DELCINA YAZHINI. R",
+		"Dikshita R.J IX",
+		"Rengarajan XI"
 	],
 	"Vice Captain Ruby (Boys)": [
 		"AATHESH.G",
@@ -119,7 +145,9 @@
 		"LAKSHAN.S",
 		"VISHAL KARTHIK.N",
 		"DHIVAGAR.R",
-		"PRAJITH KUMAR.A"
+		"PRAJITH KUMAR.A",
+		"Sarvesh IX",
+		"Aasimiya IX"
 	],
 	"Vice Captain Ruby (Girls)": [
 		"DELINE ARO.A",
@@ -129,7 +157,9 @@
 		"EESHA.C.K",
 		"REENA JANE.G",
 		"ABINAYA.J",
-		"DIYA DHARSHIKA. S"
+		"DIYA DHARSHIKA. S",
+		"Suresh Mdu IX",
+		"Aruna IX"
 	],
 	"Vice Captain Emerald (Boys)": [
 		"SHREE DHARAN.P.V",
@@ -139,7 +169,9 @@
 		"NIKHILESH.S",
 		"VIKAS RAJA. J",
 		"AUSTIN.R.",
-		"KABIL CHAKRAVRTHI.A"
+		"KABIL CHAKRAVRTHI.A",
+		"Ragu.J IX",
+		"Praveen XI"
 	],
 	"Vice Captain Emerald (Girls)": [
 		"SHAMEERA. A",
@@ -152,7 +184,8 @@
 		"AMIRTHA VARSHINI.T",
 		"JAI DHIYASHINI.K",
 		"KANISHKA.T",
-		"NIKITHA MAYURI.S"
+		"NIKITHA MAYURI.S",
+		"Khirthiga XI"
 	],
 	"Vice Captain Sapphire (Boys)": [
 		"AAKASH. A",
@@ -163,7 +196,8 @@
 		"ARAVIND.N",
 		"DHANVANTH  KRISHNAA.P",
 		"MOHAMMED  FAYAZ.J",
-		"DHIVYA VIGNESH.V"
+		"DHIVYA VIGNESH.V",
+		"Soundarya XI"
 	],
 	"Vice Captain Sapphire (Girls)": [
 		"DIVYA  RAKSHANA.S.K",
@@ -172,6 +206,7 @@
 		"NIRUPHAMA.K.M",
 		"GAYATHRI V.K",
 		"DHANYA  LAKSHMI.V",
-		"SABARI SHRI.P"
+		"SABARI SHRI.P",
+		"Abila XI"
 	]
 }

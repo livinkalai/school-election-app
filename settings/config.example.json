@@ -3,7 +3,7 @@
     "sync_secret": "karthik",
     "lan_discovery": true,
     "lan_scan_cidrs": [],
-    "school_name": "TTAC",
+    "school_name": "Your School Name",
     "logo_url": "/static/images/school_logo.jpg",
     "background_url": "/static/images/school_bg.jpg",
     "admin_username": "admin",
